@@ -1,0 +1,35 @@
+{
+  "name": "POST /api/v1/bootstrap - Runtime configuration injected by LeadPulse",
+  "endpoint": "/api/v1/bootstrap",
+  "method": "POST",
+  "requiresAuth": false,
+  "expectedStatus": 200,
+  "taskId": "ad43f1af-23b1-4686-8316-64e399c1d6a5",
+  "sprintId": "7f503ef9-3bf1-4ce9-b055-9f4824e676a1",
+  "priority": 1,
+  "testability": "manual",
+  "skipReason": "Bootstrap is invoked ONCE by the LeadPulse CRM via HMAC-signed call after ECS task start. Not part of regression suite.",
+  "testCases": [
+    {
+      "name": "Bootstrap with runtime config (manual)",
+      "headers": {
+        "X-Bootstrap-Secret": "{{static:bootstrap-shared-secret}}"
+      },
+      "payload": {
+        "mongodb_url": "{{static:mongodb://user:pw@host:27017/?authSource=admin}}",
+        "mongodb_db": "{{static:leadpulse_mcp_db}}",
+        "leadpulse_url": "{{static:https://app.leadpulse.example}}",
+        "leadpulse_token": "{{static:sixteen-plus-char-bearer-token}}",
+        "instance_id": "{{static:arn:aws:ecs:us-east-1:acct:task/abc}}",
+        "sender_agents_per_container": 4
+      },
+      "expectedStatus": 200,
+      "expectedResponse": {
+        "success": true,
+        "data": {
+          "configured": true
+        }
+      }
+    }
+  ]
+}

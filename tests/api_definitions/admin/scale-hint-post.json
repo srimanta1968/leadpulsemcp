@@ -1,0 +1,12 @@
+{
+  "name": "POST /api/v1/admin/scale-hint - CRM drain / resume hint",
+  "endpoint": "/api/v1/admin/scale-hint",
+  "method": "POST",
+  "requiresAuth": false,
+  "expectedStatus": 200,
+  "taskId": "cf6027ae-08dd-42b2-a37e-95c4404d41c1",
+  "sprintId": "7f503ef9-3bf1-4ce9-b055-9f4824e676a1",
+  "priority": 80,
+  "testability": "manual",
+  "skipReason": "Admin-only HMAC-verified endpoint. Exercised from the CRM admin portal."
+}

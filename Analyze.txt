@@ -1,0 +1,62 @@
+● Two different "MCP" systems live in this repo. I'll focus on the primary one (Managed Campaign Processor), then note the other.                                                                
+                                            
+  Managed Campaign Processor (docs/mcp-agent-design.md)                                                                                                                                          
+                                                                                                                                                                                                 
+  External Docker agent system that executes campaign email delivery on behalf of the ProjexLight CRM. CRM owns config + conversions; MCP owns contacts + sends. They talk only over HMAC-signed 
+  HTTPS — no shared DB.                                                                                                                                                                          
+                                                                                                                                                                                                 
+  End-to-end workflow                                                                                                                                                                            
+
+  1. Container boot
+  - Container starts in ECS, calls POST /api/mcp/register → receives instance_id + HMAC secret.
+  - Starts 3 process types: 1 extraction agent, K sender agents (default 4), 1 heartbeat loop. A separate singleton mcp-hygiene service runs the hygiene agent (elected via Mongo lease).
+
+  2. Work discovery (Extraction agent, 60s poll)
+  - GET /api/mcp/campaigns?since=<ts> → list of campaigns newly running or with new files.
+  - Acquires a per-campaign lease in campaign_leases (TTL 10min) so only one container ingests a given campaign.
+  - GET /api/mcp/campaigns/:id/manifest → presigned S3 URLs, step templates, schedule, sender secret_ref.
+
+  3. Ingestion (Extraction agent)
+  - Streams each S3 file row-by-row (CSV/XLSX/JSON) — never fully loaded.
+  - Per row: normalize (lowercase email, E.164 phone), then three writes:
+    - Upsert campaign_contacts keyed by (campaign_id, email).
+    - Upsert refined_contacts keyed by email (cross-tenant pool; merge rules in §6 — sticky hard_bounce/unsubscribed_global).
+    - Enqueue one send_queue doc per (contact, step_index) with scheduled_for = start + step_offset in campaign tz.
+  - POST /api/mcp/file-ingested with counts. Releases lease. Bad rows go to ingest_errors; fail only if >10% error.
+
+  4. Sending (Sender agent, 15s poll)
+  - Query send_queue for status:pending, scheduled_for ≤ now, campaign_id ∈ active.
+  - findOneAndUpdate → lease batch (status:leased, lease_expires_at: now+5min). Sweeper reverts expired leases.
+  - Per send:
+    a. Skip if refined_contacts.unsubscribed_global or hard_bounce.
+    b. POST /api/mcp/resolve-secret → decrypted SendGrid key (10min in-memory cache, never persisted).
+    c. Render step template with {{firstName}}, {{booking_link}}, etc. Inject CRM tracking pixel + click-wrapped URLs.
+    d. Send via SendGrid HTTP API (SMTP fallback).
+    e. POST /api/mcp/tracker-event with sent/bounced; update send_queue.status.
+  - Throttles: per-campaign daily cap (atomic campaign_stats.sent_today), per-provider token bucket, honors SendGrid 429.
+
+  5. Completion signals
+  - After each send, if send_queue pending for that campaign == 0: POST /api/mcp/campaign-step-complete or /campaign-complete. CRM flips status.
+
+  6. Hygiene (singleton, always on)
+  - Bounces: increments bounce_count, sets sticky hard_bounce, decays deliverability_score.
+  - Unsubscribes: CRM pushes via POST /contacts/mark-unsubscribed → cascades to all campaign_contacts + marks remaining send_queue skipped_unsubscribed.
+  - Re-verification: every 30d via ZeroBounce/NeverBounce, bounded to contacts seen in last 90d.
+  - Merges new upserts into refined_contacts using field precedence rules.
+  - Exposes gated read API for future contact-list commerce (consent-filtered).
+
+  7. Reverse direction (CRM → MCP)
+  - Tracker click → GET /contacts/lookup for lead creation.
+  - POST /contacts/mark-converted when a contact becomes a lead.
+  - POST /admin/scale-hint to drain/resume.
+
+  8. Heartbeat & scaling (every 30s)
+  - POST /api/mcp/heartbeat with agent states, CPU/mem, in-flight campaigns, Mongo lag.
+  - CRM forecasting recommends recommended_instances; operator or autoscale flag calls ECS UpdateService.
+  - On SIGTERM: 60s grace — finish active sends, release leases, final heartbeat.
+
+  Guarantees
+
+  - Idempotency: (campaign_id, email) and (campaign_id, email, step_index) unique indexes.
+  - At-most-once-ish: lease + status=sent double-check + SendGrid X-Message-Id dedup.
+  - Failure isolation: CRM down → extraction pauses, sender drains leased work, events buffer to pending_crm_events.

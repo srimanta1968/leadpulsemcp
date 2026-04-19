@@ -1,0 +1,84 @@
+{
+  "_note": "CloudWatch alarms + log-metric filters for the LeadPulse MCP fleet. Apply via Terraform / CloudFormation in your infra repo; the JSON is a declarative source of truth for the on-call team.",
+  "namespace": "LeadPulseMCP",
+  "metrics_emitted_by_app": [
+    { "name": "mcp.extraction.rows_ingested_total", "unit": "Count" },
+    { "name": "mcp.extraction.errors_total", "unit": "Count" },
+    { "name": "mcp.sender.emails_sent_total", "unit": "Count" },
+    { "name": "mcp.sender.emails_bounced_total", "unit": "Count" },
+    { "name": "mcp.sender.emails_failed_total", "unit": "Count" },
+    { "name": "mcp.sender.send_latency_ms", "unit": "Milliseconds" },
+    { "name": "mcp.hygiene.refined_contacts_updated_total", "unit": "Count" },
+    { "name": "mcp.hygiene.suppressions_total", "unit": "Count" },
+    { "name": "mcp.queue.pending_depth", "unit": "None", "dimensions": ["campaign_id"] },
+    { "name": "mcp.crm_api.call_latency_ms", "unit": "Milliseconds", "dimensions": ["endpoint"] },
+    { "name": "mcp.crm_api.errors_total", "unit": "Count", "dimensions": ["endpoint", "code"] },
+    { "name": "mcp.watchdog.loop_restart_total", "unit": "Count", "dimensions": ["loop"] }
+  ],
+  "log_metric_filters": [
+    {
+      "name": "heartbeat_failed",
+      "log_group": "/ecs/leadpulse-mcp",
+      "pattern": "{ $.msg = \"heartbeat_post_failed\" }",
+      "metric_name": "mcp.heartbeat.failed_total"
+    },
+    {
+      "name": "circuit_open",
+      "log_group": "/ecs/leadpulse-mcp",
+      "pattern": "{ $.msg = \"crm_circuit_open\" }",
+      "metric_name": "mcp.crm_api.circuit_open_total"
+    }
+  ],
+  "alarms": [
+    {
+      "name": "mcp-heartbeat-missing",
+      "description": "No successful heartbeat for >2 minutes — page on-call",
+      "metric_name": "mcp.heartbeat.failed_total",
+      "comparison": "GreaterThanOrEqualToThreshold",
+      "threshold": 4,
+      "period_seconds": 30,
+      "evaluation_periods": 4,
+      "severity": "page"
+    },
+    {
+      "name": "mcp-queue-backlog-growing",
+      "description": "send_queue.pending_depth is growing with no drain for >1h",
+      "metric_name": "mcp.queue.pending_depth",
+      "comparison": "GreaterThanThreshold",
+      "threshold": 10000,
+      "period_seconds": 300,
+      "evaluation_periods": 12,
+      "severity": "ticket"
+    },
+    {
+      "name": "mcp-hygiene-lease-missed",
+      "description": "Hygiene singleton lease not renewed for >5 min",
+      "metric_name": "mcp.hygiene.refined_contacts_updated_total",
+      "comparison": "LessThanThreshold",
+      "threshold": 1,
+      "period_seconds": 300,
+      "evaluation_periods": 1,
+      "severity": "page"
+    },
+    {
+      "name": "mcp-crm-api-error-rate",
+      "description": "CRM API error rate >5% for 10 minutes",
+      "metric_name": "mcp.crm_api.errors_total",
+      "comparison": "GreaterThanThreshold",
+      "threshold_math": "errors_total / total_calls > 0.05",
+      "period_seconds": 60,
+      "evaluation_periods": 10,
+      "severity": "page"
+    },
+    {
+      "name": "mcp-watchdog-restart-storm",
+      "description": "Any agent loop restarted >=5 times within 10 min",
+      "metric_name": "mcp.watchdog.loop_restart_total",
+      "comparison": "GreaterThanOrEqualToThreshold",
+      "threshold": 5,
+      "period_seconds": 600,
+      "evaluation_periods": 1,
+      "severity": "page"
+    }
+  ]
+}

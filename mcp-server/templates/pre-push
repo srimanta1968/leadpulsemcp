@@ -1,0 +1,1173 @@
+#!/bin/bash
+
+# ProjexLight MCP Pre-Push Hook (Cross-Platform)
+# ============================================
+# Triggers API testing and component duplication detection before git push
+# This hook is installed automatically by the MCP server on startup
+# Supports Windows (Git Bash/PowerShell), macOS, and Linux
+#
+# Exit codes:
+#   0 = Push allowed
+#   1 = Push blocked (server not running, build failed, etc.)
+
+# Note: We don't use 'set -e' because we want to handle errors gracefully
+# and show meaningful messages to users instead of failing silently.
+# All error handling is done explicitly in the code below.
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Configuration
+MCP_SERVER_URL="${MCP_SERVER_URL:-http://localhost:8766}"
+
+# Report directories (separate from pre-commit)
+PREPUSH_REPORTS_DIR=""
+TODOS_REPORTS_DIR=""
+HAS_VIOLATIONS=false
+HAS_TODOS=false
+
+# API Test Mode Configuration
+# Set to 'full' to run ALL API tests (useful for CI/CD or before release)
+# Set to 'incremental' (default) to only test APIs related to changed files
+API_TEST_MODE="${API_TEST_MODE:-incremental}"
+
+# ============================================================
+# Detect Operating System
+# ============================================================
+detect_os() {
+    case "$(uname -s)" in
+        Linux*)
+            if grep -q Microsoft /proc/version 2>/dev/null; then
+                echo "wsl"
+            else
+                echo "linux"
+            fi
+            ;;
+        Darwin*)
+            echo "macos"
+            ;;
+        CYGWIN*|MINGW*|MSYS*)
+            echo "windows"
+            ;;
+        *)
+            echo "unknown"
+            ;;
+    esac
+}
+
+OS_TYPE=$(detect_os)
+
+# Set PROJECT_ROOT based on where the hook is running
+if [ "$OS_TYPE" = "linux" ] && [ -d "/workspace" ]; then
+    # Running inside Docker container
+    PROJECT_ROOT="/workspace"
+else
+    # Running on host (Windows/Mac/WSL) - use git repository root
+    PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+fi
+
+# ============================================================
+# MULTI-PROJECT SUPPORT: Detect project path for credential routing
+# ============================================================
+# Convert Windows path to Unix format for Docker compatibility
+# C:\Users\name\project -> /c/Users/name/project
+to_unix_path() {
+    local path="$1"
+    # Already Unix path
+    if [[ "$path" == /* ]]; then
+        echo "$path"
+        return
+    fi
+    # Convert backslashes to forward slashes
+    path="${path//\\//}"
+    # Convert Windows drive letter: C:/... -> /c/...
+    if [[ "$path" =~ ^([A-Za-z]):(.*)$ ]]; then
+        local drive="${BASH_REMATCH[1]}"
+        local rest="${BASH_REMATCH[2]}"
+        path="/${drive,,}${rest}"
+    fi
+    echo "$path"
+}
+
+# Get the project path for multi-project context routing
+# Priority: PROJEXLIGHT_PROJECT_PATH env var > git repo root converted to Unix
+if [ -n "${PROJEXLIGHT_PROJECT_PATH:-}" ]; then
+    PROJECT_PATH="$PROJEXLIGHT_PROJECT_PATH"
+elif [ "$OS_TYPE" = "linux" ] && [ -d "/workspace" ]; then
+    # Inside Docker - check if HOST_PROJECT_PATH was passed
+    PROJECT_PATH="${HOST_PROJECT_PATH:-/workspace}"
+else
+    # On host - convert Windows path to Unix format
+    PROJECT_PATH=$(to_unix_path "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
+fi
+
+echo -e "${BLUE}   Project path (for multi-project):${NC} ${PROJECT_PATH}"
+echo -e "${BLUE}🚀 ProjexLight Pre-Push Hook${NC}"
+echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "   OS Detected: ${GREEN}${OS_TYPE}${NC}"
+
+# Create report directories
+PREPUSH_REPORTS_DIR="${PROJECT_ROOT}/.projexlight/reports/pre-push"
+TODOS_REPORTS_DIR="${PROJECT_ROOT}/.projexlight/reports/todos"
+mkdir -p "$PREPUSH_REPORTS_DIR"
+mkdir -p "$TODOS_REPORTS_DIR"
+
+# ============================================================
+# STEP 1: Check if MCP server is running
+# ============================================================
+if ! curl -s "${MCP_SERVER_URL}/health" > /dev/null 2>&1; then
+    echo -e "${YELLOW}⚠️  MCP server not running at ${MCP_SERVER_URL}${NC}"
+    echo -e "${YELLOW}   Skipping API tests and component scanning${NC}"
+    echo -e "${YELLOW}   Start MCP server: cd mcp-server && ./setup-all.sh${NC}"
+    exit 0
+fi
+
+echo -e "${GREEN}✓ MCP server is running${NC}"
+
+# ============================================================
+# STEP 2: Load server configuration (if available)
+# ============================================================
+CONFIG_FILE="${PROJECT_ROOT}/.projexlight/scripts/server-config.json"
+
+# Select appropriate startup script based on OS
+if [ "$OS_TYPE" = "windows" ]; then
+    # Windows: prefer PowerShell script
+    STARTUP_SCRIPT="${PROJECT_ROOT}/.projexlight/scripts/start-server.ps1"
+    STARTUP_COMMAND="powershell.exe -ExecutionPolicy Bypass -File"
+    if [ ! -f "$STARTUP_SCRIPT" ]; then
+        STARTUP_SCRIPT="${PROJECT_ROOT}/.projexlight/scripts/start-server.bat"
+        STARTUP_COMMAND=""
+    fi
+else
+    # Unix/Linux/macOS: use bash script
+    STARTUP_SCRIPT="${PROJECT_ROOT}/.projexlight/scripts/start-server.sh"
+    STARTUP_COMMAND="bash"
+fi
+
+# ============================================================
+# AUTO-DETECT PORT from .env file (PRIORITY 1)
+# ============================================================
+SERVER_PORT=""
+DB_PORT=""
+ENV_FILE=""
+
+# Check common .env locations
+for env_path in "$PROJECT_ROOT/.env" "$PROJECT_ROOT/server/.env" "$PROJECT_ROOT/backend/.env"; do
+    if [ -f "$env_path" ]; then
+        ENV_FILE="$env_path"
+        break
+    fi
+done
+
+if [ -n "$ENV_FILE" ]; then
+    echo -e "\n${BLUE}📋 Reading configuration from .env file...${NC}"
+    echo -e "   Location: ${GREEN}${ENV_FILE}${NC}"
+
+    # Load ALL environment variables from .env file (make them available to subprocesses)
+    # On Windows/WSL, .env files may have CRLF line endings which cause bash to
+    # misinterpret values (e.g. triggering Windows 'AT' command). Strip \r on all
+    # platforms — it's a harmless no-op on Unix files with clean LF endings.
+    CLEAN_ENV_FILE=$(mktemp "${TMPDIR:-/tmp}/env_clean.XXXXXX")
+    sed 's/\r$//' "$ENV_FILE" > "$CLEAN_ENV_FILE"
+    set -a  # Enable export for all variables
+    source "$CLEAN_ENV_FILE" 2>/dev/null || true
+    set +a  # Disable export
+    rm -f "$CLEAN_ENV_FILE"
+
+    # Parse PORT from .env (handle various formats: PORT=3005, PORT = 3005, PORT="3005")
+    if grep -q "^PORT[[:space:]]*=" "$ENV_FILE"; then
+        SERVER_PORT=$(grep "^PORT[[:space:]]*=" "$ENV_FILE" | head -1 | sed 's/^PORT[[:space:]]*=[[:space:]]*//; s/"//g; s/'"'"'//g; s/#.*//; s/[[:space:]]*$//')
+        export SERVER_PORT
+        echo -e "   Server port: ${GREEN}${SERVER_PORT}${NC} (from .env)"
+    fi
+
+    # Parse DB_PORT from .env
+    if grep -q "^DB_PORT[[:space:]]*=" "$ENV_FILE"; then
+        DB_PORT=$(grep "^DB_PORT[[:space:]]*=" "$ENV_FILE" | head -1 | sed 's/^DB_PORT[[:space:]]*=[[:space:]]*//; s/"//g; s/'"'"'//g; s/#.*//; s/[[:space:]]*$//')
+        export DB_PORT
+        echo -e "   Database port: ${GREEN}${DB_PORT}${NC} (from .env)"
+    fi
+fi
+
+# ============================================================
+# LOAD PROJECT CONFIGURATION (PRIORITY 2)
+# ============================================================
+if [ -f "$CONFIG_FILE" ]; then
+    echo -e "\n${BLUE}📋 Loading project configuration...${NC}"
+    PROJECT_TYPE=$(jq -r '.project_type // "unknown"' "$CONFIG_FILE" 2>/dev/null || echo "unknown")
+    FRAMEWORK=$(jq -r '.framework // "unknown"' "$CONFIG_FILE" 2>/dev/null || echo "unknown")
+
+    # Only use config.json port if .env didn't provide one
+    if [ -z "$SERVER_PORT" ]; then
+        SERVER_PORT=$(jq -r '.server_port // 3000' "$CONFIG_FILE" 2>/dev/null || echo "3000")
+        echo -e "   Server port: ${GREEN}${SERVER_PORT}${NC} (from config.json)"
+    fi
+
+    HEALTH_ENDPOINT=$(jq -r '.health_endpoint // "/health"' "$CONFIG_FILE" 2>/dev/null || echo "/health")
+
+    echo -e "   Project type: ${GREEN}${PROJECT_TYPE}${NC}"
+    echo -e "   Framework: ${GREEN}${FRAMEWORK}${NC}"
+else
+    # Fallback to environment variables or defaults
+    if [ -z "$SERVER_PORT" ]; then
+        SERVER_PORT="${BACKEND_PORT:-3000}"
+        echo -e "\n${YELLOW}⚠️  No .env or config.json found${NC}"
+        echo -e "${YELLOW}   Using default port: ${SERVER_PORT}${NC}"
+    fi
+    HEALTH_ENDPOINT="/health"
+    PROJECT_TYPE="unknown"
+    FRAMEWORK="unknown"
+fi
+
+# Full health endpoint URL
+HEALTH_URL="http://localhost:${SERVER_PORT}${HEALTH_ENDPOINT}"
+
+# ============================================================
+# STEP 3: Check if local dev server is running
+# ============================================================
+echo -e "\n${BLUE}🌐 Checking local development server...${NC}"
+
+SERVER_RUNNING=false
+
+# Try health endpoint first
+if curl -s --max-time 5 "${HEALTH_URL}" > /dev/null 2>&1; then
+    SERVER_RUNNING=true
+    echo -e "${GREEN}✓ Server is running at ${HEALTH_URL}${NC}"
+# Try just the port
+elif curl -s --max-time 5 "http://localhost:${SERVER_PORT}" > /dev/null 2>&1; then
+    SERVER_RUNNING=true
+    echo -e "${GREEN}✓ Server is running on port ${SERVER_PORT}${NC}"
+fi
+
+# ============================================================
+# STEP 4b: SUT BIND ADDRESS CHECK
+# ============================================================
+# Even if the SUT is "running" (the curl above from the host succeeded),
+# it may be bound to 127.0.0.1 only, in which case the Dev MCP container
+# will still fail to reach it via host.docker.internal. This check
+# catches that case BEFORE we waste time starting a test run that will
+# fail every single API call with the exact same "Cannot connect to
+# host host.docker.internal:${SERVER_PORT}" error.
+#
+# Delegate to check-sut.sh if it's present in the CLI-exported
+# mcp-server folder. Fall back to a minimal inline probe if not.
+if [ "$SERVER_RUNNING" = true ] && [ -n "$SERVER_PORT" ]; then
+    CHECK_SUT_SCRIPT="$PROJECT_ROOT/mcp-server/check-sut.sh"
+    if [ -x "$CHECK_SUT_SCRIPT" ]; then
+        echo -e "${BLUE}   Running SUT bind-address pre-flight...${NC}"
+        SUT_BASE_URL="http://localhost:${SERVER_PORT}" \
+        SUT_CONTAINER="projexlight-dev-mcp" \
+            "$CHECK_SUT_SCRIPT" || {
+                echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+                echo -e "${RED}❌ PUSH BLOCKED: SUT is not reachable from Dev MCP${NC}"
+                echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+                echo ""
+                echo -e "${YELLOW}Your dev server is running, but it is not reachable from${NC}"
+                echo -e "${YELLOW}inside the Dev MCP container. The most common cause is the${NC}"
+                echo -e "${YELLOW}server binding to 127.0.0.1 instead of 0.0.0.0.${NC}"
+                echo ""
+                echo -e "${BLUE}See the full framework-specific fix guide:${NC}"
+                echo -e "   ${CYAN}${PROJECT_ROOT}/mcp-server/docs/SUT_SETUP_GUIDE.md${NC}"
+                echo ""
+                echo -e "${YELLOW}To bypass this check for one push (NOT recommended):${NC}"
+                echo -e "   ${YELLOW}SKIP_SUT_CHECK=true git push${NC}"
+                echo ""
+                if [ "${SKIP_SUT_CHECK:-false}" != "true" ]; then
+                    exit 1
+                fi
+                echo -e "${YELLOW}SKIP_SUT_CHECK=true set — proceeding anyway.${NC}"
+            }
+    else
+        # Inline minimal check — probe the SUT from inside the Dev MCP
+        # container, same way check-sut.sh would, but without the
+        # framework-specific guidance output.
+        if docker exec projexlight-dev-mcp curl -s -o /dev/null --max-time 3 \
+            "http://host.docker.internal:${SERVER_PORT}" 2>/dev/null; then
+            echo -e "${GREEN}✓ Dev MCP can reach SUT via host.docker.internal${NC}"
+        else
+            echo -e "${YELLOW}⚠️  Dev MCP container cannot reach SUT at host.docker.internal:${SERVER_PORT}${NC}"
+            echo -e "${YELLOW}   Your SUT is likely bound to 127.0.0.1 (loopback only).${NC}"
+            echo -e "${YELLOW}   Restart it on 0.0.0.0 — see mcp-server/docs/SUT_SETUP_GUIDE.md${NC}"
+            echo -e "${YELLOW}   API tests below will fail with 'Connect call failed' errors.${NC}"
+            if [ "${SKIP_SUT_CHECK:-false}" != "true" ]; then
+                exit 1
+            fi
+        fi
+    fi
+fi
+
+# ============================================================
+# STEP 4: If server not running, BLOCK PUSH
+# ============================================================
+if [ "$SERVER_RUNNING" = false ]; then
+    echo -e "\n${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${RED}❌ PUSH BLOCKED: Local development server is not running${NC}"
+    echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    echo -e "${YELLOW}API tests cannot be executed without a running server.${NC}"
+    echo -e "${YELLOW}Please start your development server before pushing.${NC}"
+    echo ""
+
+    # Check if startup script exists
+    if [ -f "$STARTUP_SCRIPT" ]; then
+        echo -e "${BLUE}📝 To start the server, run:${NC}"
+        if [ "$OS_TYPE" = "windows" ]; then
+            echo -e "   ${STARTUP_COMMAND} \"${STARTUP_SCRIPT}\""
+        else
+            echo -e "   ${STARTUP_SCRIPT}"
+        fi
+        echo ""
+        echo -e "${BLUE}This script will:${NC}"
+        echo -e "   1. Load environment variables from .env"
+        echo -e "   2. Install dependencies (if needed)"
+        echo -e "   3. Build/compile the project"
+        echo -e "   4. Start the development server"
+        echo -e "   5. Verify it's running with health check"
+        echo ""
+
+        # Offer to run the script
+        if [ "${PROJEXLIGHT_AUTO_START_SERVER:-false}" = "true" ]; then
+            echo -e "${BLUE}🚀 Auto-starting server...${NC}"
+
+            # Execute startup script based on OS
+            if [ "$OS_TYPE" = "windows" ]; then
+                if [ -n "$STARTUP_COMMAND" ]; then
+                    $STARTUP_COMMAND "$STARTUP_SCRIPT"
+                    STARTUP_RESULT=$?
+                else
+                    "$STARTUP_SCRIPT"
+                    STARTUP_RESULT=$?
+                fi
+            else
+                "$STARTUP_SCRIPT"
+                STARTUP_RESULT=$?
+            fi
+
+            if [ $STARTUP_RESULT -eq 0 ]; then
+                SERVER_RUNNING=true
+                echo -e "${GREEN}✓ Server started successfully${NC}"
+            else
+                EXIT_CODE=$STARTUP_RESULT
+                echo -e "${RED}❌ Server startup failed (exit code: $EXIT_CODE)${NC}"
+
+                case $EXIT_CODE in
+                    1)
+                        echo -e "${RED}   Problem: Dependency installation failed${NC}"
+                        echo -e "${YELLOW}   Fix: Check npm/pip/composer dependencies${NC}"
+                        ;;
+                    2)
+                        echo -e "${RED}   Problem: Build/compilation failed${NC}"
+                        echo -e "${YELLOW}   Fix: Resolve syntax/type errors before pushing${NC}"
+                        ;;
+                    3)
+                        echo -e "${RED}   Problem: Server failed to start${NC}"
+                        echo -e "${YELLOW}   Fix: Check configuration and environment variables${NC}"
+                        ;;
+                    4)
+                        echo -e "${RED}   Problem: Health check failed${NC}"
+                        echo -e "${YELLOW}   Fix: Server started but not responding correctly${NC}"
+                        ;;
+                esac
+
+                echo ""
+                echo -e "${YELLOW}Check logs: ${PROJECT_ROOT}/.projexlight/logs/server-startup.log${NC}"
+                exit 1
+            fi
+        else
+            echo -e "${YELLOW}To enable auto-start: export PROJEXLIGHT_AUTO_START_SERVER=true${NC}"
+            echo ""
+        fi
+    else
+        # No startup script, provide manual instructions
+        echo -e "${BLUE}📝 Please start your server manually:${NC}"
+
+        case "$PROJECT_TYPE" in
+            node|monorepo)
+                echo -e "   ${YELLOW}npm run dev${NC}  or  ${YELLOW}npm start${NC}"
+                ;;
+            python)
+                case "$FRAMEWORK" in
+                    FastAPI)
+                        echo -e "   ${YELLOW}uvicorn main:app --reload${NC}"
+                        ;;
+                    Flask)
+                        echo -e "   ${YELLOW}flask run${NC}"
+                        ;;
+                    Django)
+                        echo -e "   ${YELLOW}python manage.py runserver${NC}"
+                        ;;
+                    *)
+                        echo -e "   ${YELLOW}python main.py${NC}  or  ${YELLOW}python app.py${NC}"
+                        ;;
+                esac
+                ;;
+            java)
+                echo -e "   ${YELLOW}mvn spring-boot:run${NC}  or  ${YELLOW}gradle bootRun${NC}"
+                ;;
+            go)
+                echo -e "   ${YELLOW}go run main.go${NC}"
+                ;;
+            *)
+                echo -e "   ${YELLOW}Start your development server on port ${SERVER_PORT}${NC}"
+                ;;
+        esac
+
+        echo ""
+    fi
+
+    # Final check if server was auto-started
+    if [ "$SERVER_RUNNING" = false ]; then
+        echo -e "${RED}Push blocked until server is running.${NC}"
+        echo ""
+        echo -e "${YELLOW}To bypass (NOT RECOMMENDED): git push --no-verify${NC}"
+        exit 1
+    fi
+fi
+
+# ============================================================
+# STEP 5: Get changed files
+# ============================================================
+echo -e "\n${BLUE}📋 Identifying changed files...${NC}"
+
+# Read pre-push hook input (local_ref local_sha remote_ref remote_sha)
+while read local_ref local_sha remote_ref remote_sha; do
+    # Check if this is a new branch (remote_sha is all zeros)
+    if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
+        echo -e "   ${BLUE}New branch detected - analyzing all commits${NC}"
+        # New branch: get all files in commits being pushed
+        # For initial commit, diff-tree returns empty (no parent), so use empty tree comparison
+        CHANGED_FILES=$(git diff-tree --no-commit-id --name-only -r $local_sha 2>/dev/null)
+        # If diff-tree returned empty (initial commit), compare against empty tree
+        if [ -z "$CHANGED_FILES" ]; then
+            CHANGED_FILES=$(git diff --name-only 4b825dc642cb6eb9a060e54bf8d69288fbee4904..$local_sha 2>/dev/null || git ls-files)
+        fi
+    else
+        # Existing branch: get files changed since remote
+        CHANGED_FILES=$(git diff --name-only $remote_sha..$local_sha 2>/dev/null || echo "")
+    fi
+done
+
+# Fallback: if no input from pre-push hook (shouldn't happen, but just in case)
+if [ -z "$CHANGED_FILES" ]; then
+    REMOTE_BRANCH=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null || true)
+    if [ -n "$REMOTE_BRANCH" ]; then
+        # Has upstream tracking branch
+        CHANGED_FILES=$(git diff --name-only ${REMOTE_BRANCH}..HEAD 2>/dev/null || echo "")
+    else
+        # No upstream - might be first push
+        echo -e "   ${YELLOW}No upstream branch found - analyzing all tracked files${NC}"
+        CHANGED_FILES=$(git diff --name-only --cached 2>/dev/null || git ls-files)
+    fi
+fi
+
+if [ -z "$CHANGED_FILES" ]; then
+    echo -e "${YELLOW}⚠️  No changed files detected${NC}"
+    echo -e "${YELLOW}   Skipping API tests and component scanning${NC}"
+    exit 0
+fi
+
+# Count unique changed files
+FILE_COUNT=$(echo "$CHANGED_FILES" | wc -l)
+echo -e "${GREEN}✓ Found ${FILE_COUNT} changed files${NC}"
+
+# Convert to JSON array
+CHANGED_FILES_JSON=$(echo "$CHANGED_FILES" | jq -R -s -c 'split("\n") | map(select(length > 0))')
+
+# ============================================================
+# STEP 6: TODO Detection - Missing API/Mock Reminders
+# ============================================================
+echo -e "\n${BLUE}📝 Scanning for TODO comments in changed files...${NC}"
+
+# Scan changed files for TODOs
+TODO_COUNT=0
+API_TODO_COUNT=0
+declare -a TODO_LIST
+declare -a API_TODO_LIST
+
+for file in $CHANGED_FILES; do
+    # Skip non-code files
+    if [[ ! "$file" =~ \.(ts|tsx|js|jsx|py|java|go|rb|php|cs|cpp|c|rs|swift|kt)$ ]]; then
+        continue
+    fi
+
+    # Check if file exists
+    if [ -f "$file" ]; then
+        # Search for TODO patterns with line numbers
+        while IFS= read -r line; do
+            if [ -n "$line" ]; then
+                LINE_NUM=$(echo "$line" | cut -d: -f1)
+                LINE_CONTENT=$(echo "$line" | cut -d: -f2-)
+
+                # Check if it's an API-related TODO
+                if echo "$LINE_CONTENT" | grep -qiE "(api|mock|placeholder|replace.*api|waiting.*api|endpoint|fetch|axios|http)"; then
+                    API_TODO_COUNT=$((API_TODO_COUNT + 1))
+                    API_TODO_LIST+=("${file}:${LINE_NUM}: ${LINE_CONTENT}")
+                else
+                    TODO_COUNT=$((TODO_COUNT + 1))
+                    TODO_LIST+=("${file}:${LINE_NUM}: ${LINE_CONTENT}")
+                fi
+            fi
+        done < <(grep -n -E "(TODO|FIXME|XXX|HACK)" "$file" 2>/dev/null || echo "")
+    fi
+done
+
+TOTAL_TODOS=$((TODO_COUNT + API_TODO_COUNT))
+
+if [ "$TOTAL_TODOS" -gt 0 ]; then
+    HAS_TODOS=true
+
+    echo -e "\n${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${YELLOW}⚠️  Found ${TOTAL_TODOS} TODO comment(s) in files being pushed${NC}"
+    echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+
+    # Show API-related TODOs first (higher priority)
+    if [ "$API_TODO_COUNT" -gt 0 ]; then
+        echo -e "\n${RED}🔴 API/Mock TODOs (${API_TODO_COUNT}) - May Indicate Incomplete Features:${NC}"
+        echo -e "${RED}   These suggest missing API integrations or temporary mocks:${NC}\n"
+
+        # Show first 15 API TODOs
+        count=0
+        for todo in "${API_TODO_LIST[@]}"; do
+            if [ $count -lt 15 ]; then
+                echo -e "   ${RED}•${NC} $todo"
+                count=$((count + 1))
+            fi
+        done
+        if [ "$API_TODO_COUNT" -gt 15 ]; then
+            echo -e "   ... and $((API_TODO_COUNT - 15)) more"
+        fi
+
+        echo ""
+        echo -e "${YELLOW}   💡 Before pushing, consider:${NC}"
+        echo -e "${YELLOW}      1. Check if required APIs are now available:${NC}"
+        echo -e "${BLUE}         curl -X POST http://localhost:8766/api/search-apis -d '{\"pattern\": \"your-api\"}'${NC}"
+        echo -e "${YELLOW}      2. Replace mocks with actual API calls if APIs are ready${NC}"
+        echo -e "${YELLOW}      3. Coordinate with developers working on missing APIs${NC}"
+    fi
+
+    # Show other TODOs (summarized)
+    if [ "$TODO_COUNT" -gt 0 ]; then
+        echo -e "\n${YELLOW}🟡 Other TODOs (${TODO_COUNT}):${NC}"
+        # Show first 5 TODOs
+        count=0
+        for todo in "${TODO_LIST[@]}"; do
+            if [ $count -lt 5 ]; then
+                echo -e "   ${YELLOW}•${NC} $todo"
+                count=$((count + 1))
+            fi
+        done
+        if [ "$TODO_COUNT" -gt 5 ]; then
+            echo -e "   ... and $((TODO_COUNT - 5)) more"
+        fi
+    fi
+
+    # ============================================================
+    # Generate TODO Report (saved to todos folder)
+    # ============================================================
+    TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+    TODOS_REPORT_FILE="${TODOS_REPORTS_DIR}/pre-push_todos_${TIMESTAMP}.json"
+    TODOS_LATEST="${TODOS_REPORTS_DIR}/pre-push_latest.json"
+
+    # Build JSON array for TODO items
+    TODO_ITEMS_JSON="["
+    FIRST_ITEM=true
+
+    # Add API TODOs
+    for todo in "${API_TODO_LIST[@]}"; do
+        FILE_PATH=$(echo "$todo" | cut -d: -f1)
+        LINE_NUM=$(echo "$todo" | cut -d: -f2)
+        CONTENT=$(echo "$todo" | cut -d: -f3- | sed 's/"/\\"/g' | sed "s/'/\\\\'/g")
+
+        if [ "$FIRST_ITEM" = false ]; then
+            TODO_ITEMS_JSON+=","
+        fi
+        FIRST_ITEM=false
+
+        TODO_ITEMS_JSON+=$(cat <<ITEM
+{
+      "file": "${FILE_PATH}",
+      "line": ${LINE_NUM},
+      "content": "${CONTENT}",
+      "category": "api_related",
+      "priority": "high"
+    }
+ITEM
+)
+    done
+
+    # Add other TODOs
+    for todo in "${TODO_LIST[@]}"; do
+        FILE_PATH=$(echo "$todo" | cut -d: -f1)
+        LINE_NUM=$(echo "$todo" | cut -d: -f2)
+        CONTENT=$(echo "$todo" | cut -d: -f3- | sed 's/"/\\"/g' | sed "s/'/\\\\'/g")
+
+        if [ "$FIRST_ITEM" = false ]; then
+            TODO_ITEMS_JSON+=","
+        fi
+        FIRST_ITEM=false
+
+        TODO_ITEMS_JSON+=$(cat <<ITEM
+{
+      "file": "${FILE_PATH}",
+      "line": ${LINE_NUM},
+      "content": "${CONTENT}",
+      "category": "general",
+      "priority": "normal"
+    }
+ITEM
+)
+    done
+
+    TODO_ITEMS_JSON+="]"
+
+    # Create TODO report
+    TODO_REPORT=$(cat <<EOF
+{
+  "reportType": "todos",
+  "source": "pre-push",
+  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "priority": "end-of-sprint",
+  "description": "TODO items found during pre-push hook. These should be addressed before sprint end.",
+  "summary": {
+    "total": ${TOTAL_TODOS},
+    "api_related": ${API_TODO_COUNT},
+    "general": ${TODO_COUNT}
+  },
+  "items": ${TODO_ITEMS_JSON},
+  "llm_prompt": "Please review and fix the TODO items in this pre-push report. Focus on API-related TODOs first (priority: high) as they may indicate incomplete API integrations or temporary mocks. For each TODO: 1) Search api_library for available APIs that might fulfill the requirement, 2) Replace mocks with actual API calls if APIs exist, 3) If API is not available, coordinate with team or mark for later sprint.",
+  "actionable_commands": {
+    "search_apis": "curl -X POST http://localhost:8766/api/search-apis -H 'Content-Type: application/json' -d '{\"pattern\": \"your-search-term\"}'",
+    "find_all_todos": "grep -rn 'TODO\\|FIXME' . --include='*.ts' --include='*.tsx' --include='*.js' --include='*.py'"
+  }
+}
+EOF
+)
+
+    # Save TODO report
+    echo "$TODO_REPORT" | jq '.' > "$TODOS_REPORT_FILE" 2>/dev/null || echo "$TODO_REPORT" > "$TODOS_REPORT_FILE"
+    cp "$TODOS_REPORT_FILE" "$TODOS_LATEST"
+
+    echo ""
+    echo -e "${BLUE}📋 TODO report saved: ${TODOS_REPORT_FILE}${NC}"
+
+    # If there are many API-related TODOs, ask user to confirm
+    if [ "$API_TODO_COUNT" -ge 3 ]; then
+        if [ -t 0 ]; then
+            echo -e "${YELLOW}You have ${API_TODO_COUNT} API-related TODO(s). These may indicate incomplete features.${NC}"
+            echo -e "${YELLOW}Continue with push? [Y/n]${NC}"
+            read -r -n 1 response </dev/tty
+            echo ""
+
+            case "$response" in
+                [nN])
+                    echo -e "${RED}❌ Push cancelled. Please address the API TODOs first.${NC}"
+                    echo -e "${YELLOW}   Run: grep -rn 'TODO.*api\\|TODO.*mock' . --include='*.ts' --include='*.tsx'${NC}"
+                    exit 1
+                    ;;
+                *)
+                    echo -e "${GREEN}✓ Proceeding with push despite API TODOs${NC}"
+                    ;;
+            esac
+        else
+            # Non-interactive mode - warn but don't block
+            echo -e "${YELLOW}⚠️  Non-interactive mode: ${API_TODO_COUNT} API TODO(s) detected${NC}"
+        fi
+    fi
+else
+    echo -e "${GREEN}✓ No TODO comments found in changed files${NC}"
+fi
+
+# ============================================================
+# STEP 7: Run API tests (ASYNC pattern for unlimited test duration)
+# ============================================================
+echo -e "\n${BLUE}🧪 Running API tests (mode: ${API_TEST_MODE})...${NC}"
+echo -e "   ${BLUE}Source: tests/api_definitions/ (LLM-generated)${NC}"
+
+if [ "$API_TEST_MODE" = "full" ]; then
+    echo -e "   ${YELLOW}Full mode: Testing ALL APIs${NC}"
+else
+    echo -e "   ${GREEN}Incremental mode: Testing APIs matching changed files${NC}"
+fi
+
+# Polling configuration
+API_TEST_POLL_INTERVAL="${API_TEST_POLL_INTERVAL:-3}"  # Poll every 3 seconds
+API_TEST_MAX_WAIT="${API_TEST_MAX_WAIT:-3600}"         # Max wait 1 hour for large test suites
+
+# Step 1: Start tests asynchronously
+echo -e "   ${BLUE}Starting API tests...${NC}"
+HTTP_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${MCP_SERVER_URL}/api/test/start" \
+    -H "Content-Type: application/json" \
+    -d "{
+        \"projectPath\": \"${PROJECT_PATH}\",
+        \"triggered_by\": \"git_push\",
+        \"changed_files\": ${CHANGED_FILES_JSON},
+        \"local_server_running\": true,
+        \"local_server_port\": ${SERVER_PORT},
+        \"project_type\": \"${PROJECT_TYPE}\",
+        \"api_test_mode\": \"${API_TEST_MODE}\"
+    }" 2>&1)
+CURL_EXIT_CODE=$?
+
+HTTP_STATUS=$(echo "$HTTP_RESPONSE" | tail -n 1)
+START_RESULT=$(echo "$HTTP_RESPONSE" | sed '$d')
+
+# Check start request
+if [ $CURL_EXIT_CODE -ne 0 ]; then
+    echo -e "${RED}❌ Failed to start API tests${NC}"
+    echo -e "${YELLOW}   Check MCP server is running: docker logs projexlight-mcp${NC}"
+    exit 1
+fi
+
+# Check if already running (HTTP 409)
+if [ "$HTTP_STATUS" = "409" ]; then
+    ELAPSED=$(echo "$START_RESULT" | jq -r '.elapsed_seconds // 0' 2>/dev/null || echo "0")
+    TEST_RUN_ID=$(echo "$START_RESULT" | jq -r '.testRunId // "unknown"' 2>/dev/null || echo "unknown")
+    echo -e "${YELLOW}⚠️  Another API test is already in progress (${ELAPSED}s elapsed)${NC}"
+    echo -e "${YELLOW}   Test Run ID: ${TEST_RUN_ID}${NC}"
+    echo -e "${YELLOW}   Waiting for existing test to complete...${NC}"
+else
+    TEST_RUN_ID=$(echo "$START_RESULT" | jq -r '.testRunId // "unknown"' 2>/dev/null || echo "unknown")
+    echo -e "   ${GREEN}✓ Tests started (ID: ${TEST_RUN_ID})${NC}"
+fi
+
+# Step 2: Poll for completion
+# On Windows/Git Bash, curl can hang in git hooks. We work around this by:
+# 1. Creating a temp file for output
+# 2. Running curl via bash -c in a subshell with proper I/O redirection
+# 3. Using exec to fully replace the shell process
+WAIT_TIME=0
+UNKNOWN_STATUS_COUNT=0
+STATUS_URL="${MCP_SERVER_URL}/api/test/status"
+
+while [ $WAIT_TIME -lt $API_TEST_MAX_WAIT ]; do
+    sleep "$API_TEST_POLL_INTERVAL"
+    WAIT_TIME=$((WAIT_TIME + API_TEST_POLL_INTERVAL))
+
+    # Create temp file for response
+    TEMP_FILE=$(mktemp)
+
+    # Run curl in a way that works on all platforms including Windows Git Bash
+    # The key is to redirect stdin from /dev/null and use exec
+    bash -c "exec curl -s '${STATUS_URL}' </dev/null >'$TEMP_FILE' 2>&1" &
+    CURL_PID=$!
+
+    # Wait with timeout (30 seconds per poll attempt)
+    POLL_TIMEOUT=30
+    POLL_WAIT=0
+    while [ $POLL_WAIT -lt $POLL_TIMEOUT ] && kill -0 $CURL_PID 2>/dev/null; do
+        sleep 1
+        POLL_WAIT=$((POLL_WAIT + 1))
+    done
+
+    # Check if curl finished
+    if kill -0 $CURL_PID 2>/dev/null; then
+        # Still running - kill it and retry
+        kill $CURL_PID 2>/dev/null
+        wait $CURL_PID 2>/dev/null
+        rm -f "$TEMP_FILE"
+        echo -e "\n${YELLOW}⚠️  Status poll timed out, retrying...${NC}"
+        continue
+    fi
+
+    wait $CURL_PID
+    CURL_STATUS=$?
+    STATUS_RESPONSE=$(cat "$TEMP_FILE" 2>/dev/null)
+    rm -f "$TEMP_FILE"
+
+    # Handle curl failure - retry instead of exit
+    if [ $CURL_STATUS -ne 0 ] || [ -z "$STATUS_RESPONSE" ]; then
+        UNKNOWN_STATUS_COUNT=$((UNKNOWN_STATUS_COUNT + 1))
+        if [ $UNKNOWN_STATUS_COUNT -ge 5 ]; then
+            echo -e "\n${RED}❌ Failed to connect to MCP server after 5 attempts${NC}"
+            echo -e "${YELLOW}   URL: ${STATUS_URL}${NC}"
+            echo -e "${YELLOW}   Check: docker logs projexlight-mcp${NC}"
+            exit 1
+        fi
+        echo -e "\n${YELLOW}⚠️  Connection issue (attempt ${UNKNOWN_STATUS_COUNT}/5), retrying...${NC}"
+        continue
+    fi
+
+    # Check if response is valid JSON
+    if ! echo "$STATUS_RESPONSE" | jq empty 2>/dev/null; then
+        UNKNOWN_STATUS_COUNT=$((UNKNOWN_STATUS_COUNT + 1))
+        if [ $UNKNOWN_STATUS_COUNT -ge 5 ]; then
+            echo -e "\n${RED}❌ Invalid response from test status endpoint${NC}"
+            echo -e "${YELLOW}   Response: ${STATUS_RESPONSE}${NC}"
+            exit 1
+        fi
+        continue
+    fi
+
+    # Reset retry counter on successful response
+    UNKNOWN_STATUS_COUNT=0
+
+    TEST_STATUS=$(echo "$STATUS_RESPONSE" | jq -r '.status // "unknown"' 2>/dev/null || echo "unknown")
+
+    # Check for error in response
+    ERROR_MSG=$(echo "$STATUS_RESPONSE" | jq -r '.error // empty' 2>/dev/null)
+    if [ -n "$ERROR_MSG" ]; then
+        echo -e "\n${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "${RED}❌ API Test Error${NC}"
+        echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "${YELLOW}Error: ${ERROR_MSG}${NC}"
+        echo ""
+        echo -e "${YELLOW}To debug:${NC}"
+        echo -e "  1. Check MCP logs: docker logs projexlight-mcp"
+        echo -e "  2. Check test definitions in tests/api_definitions/"
+        echo -e ""
+        echo -e "${YELLOW}To bypass: git push --no-verify${NC}"
+        exit 1
+    fi
+
+    if [ "$TEST_STATUS" = "completed" ]; then
+        # Extract results from status response
+        API_TEST_RESULT=$(echo "$STATUS_RESPONSE" | jq -r '.result // empty' 2>/dev/null)
+        if [ -z "$API_TEST_RESULT" ] || [ "$API_TEST_RESULT" = "null" ]; then
+            API_TEST_RESULT="$STATUS_RESPONSE"
+        fi
+        echo -e "   ${GREEN}✓ Tests completed${NC}"
+        break
+    elif [ "$TEST_STATUS" = "failed" ]; then
+        FAILURE_REASON=$(echo "$STATUS_RESPONSE" | jq -r '.reason // "Unknown failure"' 2>/dev/null)
+        echo -e "\n${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "${RED}❌ API Tests Failed to Execute${NC}"
+        echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "${YELLOW}Reason: ${FAILURE_REASON}${NC}"
+        echo ""
+        echo -e "${YELLOW}To debug: docker logs projexlight-mcp${NC}"
+        echo -e "${YELLOW}To bypass: git push --no-verify${NC}"
+        exit 1
+    elif [ "$TEST_STATUS" = "running" ]; then
+        ELAPSED=$(echo "$STATUS_RESPONSE" | jq -r '.elapsed_seconds // 0' 2>/dev/null || echo "0")
+        ELAPSED_INT=${ELAPSED%.*}  # Remove decimal part
+        printf "\r   ${BLUE}⏳ Running... (%ds elapsed)${NC}     " "$ELAPSED_INT"
+    elif [ "$TEST_STATUS" = "idle" ]; then
+        echo -e "\n   ${YELLOW}⚠️  Test status is idle - tests may have completed before polling started${NC}"
+        API_TEST_RESULT="{\"summary\":{\"totalAPIs\":0,\"passedAPIs\":0,\"failedAPIs\":0}}"
+        break
+    fi
+done
+echo ""  # New line after progress
+
+# Check if we timed out waiting
+if [ $WAIT_TIME -ge $API_TEST_MAX_WAIT ]; then
+    echo -e "${RED}❌ API tests did not complete within ${API_TEST_MAX_WAIT} seconds${NC}"
+    echo -e "${YELLOW}   Tests are still running in the background.${NC}"
+    echo -e "${YELLOW}   Check status: curl ${MCP_SERVER_URL}/api/test/status${NC}"
+    echo -e "${YELLOW}   Cancel if needed: curl -X POST ${MCP_SERVER_URL}/api/test/cancel${NC}"
+    exit 1
+fi
+
+# Step 3: Clear the stored result
+curl -s -X POST "${MCP_SERVER_URL}/api/test/clear" </dev/null >/dev/null 2>&1 || true
+
+# Check for error flag in response
+ERROR_OCCURRED=$(echo "$API_TEST_RESULT" | jq -r '.summary.errorOccurred // false' 2>/dev/null || echo "false")
+if [ "$ERROR_OCCURRED" = "true" ]; then
+    ERROR_MSG=$(echo "$API_TEST_RESULT" | jq -r '.error // "Unknown error"' 2>/dev/null || echo "Unknown error")
+    echo -e "${YELLOW}⚠️  API tests encountered an error: ${ERROR_MSG}${NC}"
+fi
+
+if [ $CURL_EXIT_CODE -eq 0 ] && [ -n "$API_TEST_RESULT" ]; then
+    # Parse test results
+    TOTAL_APIS=$(echo "$API_TEST_RESULT" | jq -r '.summary.totalAPIs // 0' 2>/dev/null || echo "0")
+    NEW_APIS=$(echo "$API_TEST_RESULT" | jq -r '.summary.newAPIs // 0' 2>/dev/null || echo "0")
+    MODIFIED_APIS=$(echo "$API_TEST_RESULT" | jq -r '.summary.modifiedAPIs // 0' 2>/dev/null || echo "0")
+    PASSED=$(echo "$API_TEST_RESULT" | jq -r '.summary.passedAPIs // 0' 2>/dev/null || echo "0")
+    FAILED=$(echo "$API_TEST_RESULT" | jq -r '.summary.failedAPIs // 0' 2>/dev/null || echo "0")
+    BLOCKING_CONFLICTS=$(echo "$API_TEST_RESULT" | jq -r '.summary.blockingConflicts // 0' 2>/dev/null || echo "0")
+    DUPLICATE_WARNINGS=$(echo "$API_TEST_RESULT" | jq -r '.summary.duplicateWarnings // 0' 2>/dev/null || echo "0")
+    SKIPPED=$(echo "$API_TEST_RESULT" | jq -r '.summary.skippedAPIs // 0' 2>/dev/null || echo "0")
+    TEST_DURATION=$(echo "$API_TEST_RESULT" | jq -r '.summary.testDurationMs // 0' 2>/dev/null || echo "0")
+
+    echo ""
+    echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${GREEN}✓ API Testing completed (${TEST_DURATION}ms)${NC}"
+    echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "  Total APIs tested: ${TOTAL_APIS}"
+    echo -e "  New APIs: ${GREEN}${NEW_APIS}${NC}"
+
+    if [ "$MODIFIED_APIS" -gt 0 ]; then
+        echo -e "  Modified APIs: ${BLUE}${MODIFIED_APIS}${NC}"
+    fi
+
+    echo -e "  Tests passed: ${GREEN}${PASSED}${NC}"
+
+    if [ "$FAILED" -gt 0 ]; then
+        echo -e "  Tests failed: ${RED}${FAILED}${NC}"
+
+        # Show failed test details
+        FAILED_ENDPOINTS=$(echo "$API_TEST_RESULT" | jq -r '.failedTests[]? | "   - \(.method) \(.endpoint): \(.errorMessage)"' 2>/dev/null || echo "")
+        if [ -n "$FAILED_ENDPOINTS" ]; then
+            echo -e "${RED}  Failed tests:${NC}"
+            echo "$FAILED_ENDPOINTS"
+        fi
+    fi
+
+    if [ "$SKIPPED" -gt 0 ]; then
+        echo -e "  Tests skipped: ${YELLOW}${SKIPPED}${NC}"
+
+        # Show skipped test details with actionable guidance
+        SKIPPED_ENDPOINTS=$(echo "$API_TEST_RESULT" | jq -r '.skippedTests[]? | "   - \(.method) \(.endpoint): \(.errorMessage)"' 2>/dev/null || echo "")
+        if [ -n "$SKIPPED_ENDPOINTS" ]; then
+            echo -e "${YELLOW}  Skipped tests (missing test definitions):${NC}"
+            echo "$SKIPPED_ENDPOINTS"
+            echo ""
+            echo -e "${YELLOW}  🔧 TO FIX: Ask your LLM to create missing test definitions:${NC}"
+            echo -e "     \"Create test definition JSON files for the skipped APIs above."
+            echo -e "      Include proper payload with {{dynamic:...}} or {{cache:...}} placeholders."
+            echo -e "      Then run 'git push' again.\""
+        fi
+    fi
+
+    if [ "$BLOCKING_CONFLICTS" -gt 0 ]; then
+        echo -e "  ${RED}🚨 Blocking conflicts: ${BLOCKING_CONFLICTS}${NC}"
+    fi
+
+    if [ "$DUPLICATE_WARNINGS" -gt 0 ]; then
+        echo -e "  ${YELLOW}⚠️  Duplicate warnings: ${DUPLICATE_WARNINGS}${NC}"
+    fi
+
+    # BLOCK push if there are conflicting APIs
+    if [ "$BLOCKING_CONFLICTS" -gt 0 ]; then
+        HAS_VIOLATIONS=true
+
+        echo -e "\n${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "${RED}❌ PUSH BLOCKED: ${BLOCKING_CONFLICTS} conflicting API(s) detected${NC}"
+        echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo ""
+        echo -e "${YELLOW}You have created APIs that conflict with existing endpoints:${NC}"
+        echo ""
+
+        # Show conflict details
+        CONFLICT_DETAILS=$(echo "$API_TEST_RESULT" | jq -r '.duplicateAPIsDetected[]? | select(.blocking == true) | "   - \(.newAPI.method) \(.newAPI.endpoint) in \(.newAPI.routeFilePath)\n     Conflicts with existing API in \(.existingAPI.routeFilePath)\n     Action: \(.recommendation)"' 2>/dev/null || echo "")
+        if [ -n "$CONFLICT_DETAILS" ]; then
+            echo -e "${CONFLICT_DETAILS}"
+        fi
+
+        # Generate conflict violation report
+        TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+        CONFLICT_REPORT_FILE="${PREPUSH_REPORTS_DIR}/api_conflicts_${TIMESTAMP}.json"
+        CONFLICT_LATEST="${PREPUSH_REPORTS_DIR}/conflicts_latest.json"
+
+        CONFLICT_REPORT=$(cat <<EOF
+{
+  "reportType": "api_conflicts",
+  "source": "pre-push",
+  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "priority": "immediate",
+  "blocking": true,
+  "description": "Conflicting API endpoints detected. These must be resolved before pushing.",
+  "summary": {
+    "conflicts": ${BLOCKING_CONFLICTS},
+    "warnings": ${DUPLICATE_WARNINGS}
+  },
+  "conflicts": $(echo "$API_TEST_RESULT" | jq '.duplicateAPIsDetected // []'),
+  "llm_prompt": "Please resolve the API conflicts in this report. For each conflict: 1) Review both the new API and existing API, 2) Decide whether to rename the new endpoint or reuse the existing one, 3) If renaming, update all references to the new endpoint, 4) If reusing existing, remove the duplicate API code and update imports.",
+  "resolution_steps": [
+    "Review the conflicting endpoints listed above",
+    "Choose one: rename your new API OR use the existing one",
+    "If renaming: change the endpoint path in your route file",
+    "If reusing: delete your duplicate API and import/use the existing one",
+    "Run 'git push' again after resolving"
+  ]
+}
+EOF
+)
+
+        echo "$CONFLICT_REPORT" | jq '.' > "$CONFLICT_REPORT_FILE" 2>/dev/null || echo "$CONFLICT_REPORT" > "$CONFLICT_REPORT_FILE"
+        cp "$CONFLICT_REPORT_FILE" "$CONFLICT_LATEST"
+
+        echo ""
+        echo -e "${BLUE}📋 Conflict report saved: ${CONFLICT_REPORT_FILE}${NC}"
+        echo -e "${YELLOW}Please resolve conflicts by:${NC}"
+        echo -e "  1. Renaming the new API to a different endpoint"
+        echo -e "  2. Removing the new API and using the existing one"
+        echo ""
+        echo -e "${YELLOW}💡 To fix with LLM:${NC}"
+        echo -e "   \"Read ${CONFLICT_LATEST} and resolve the API conflicts\""
+        echo ""
+        echo -e "${YELLOW}To bypass (NOT RECOMMENDED): git push --no-verify${NC}"
+        exit 1
+    fi
+
+    # Ask user interactively if tests failed
+    if [ "$FAILED" -gt 0 ]; then
+        HAS_VIOLATIONS=true
+
+        echo -e "\n${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "${RED}⚠️  ${FAILED} API test(s) failed out of ${TOTAL_APIS} total tests${NC}"
+        echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo ""
+        echo -e "${BLUE}📋 Test Summary:${NC}"
+        echo -e "   ✅ Passed: ${GREEN}${PASSED}${NC}"
+        echo -e "   ❌ Failed: ${RED}${FAILED}${NC}"
+        if [ "$SKIPPED" -gt 0 ]; then
+            echo -e "   ⏭️  Skipped: ${YELLOW}${SKIPPED}${NC}"
+        fi
+
+        # Generate API test failure report
+        TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+        FAILURE_REPORT_FILE="${PREPUSH_REPORTS_DIR}/api_failures_${TIMESTAMP}.json"
+        FAILURE_LATEST="${PREPUSH_REPORTS_DIR}/failures_latest.json"
+
+        FAILURE_REPORT=$(cat <<EOF
+{
+  "reportType": "api_test_failures",
+  "source": "pre-push",
+  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "priority": "immediate",
+  "blocking": false,
+  "description": "API tests failed during pre-push validation. These should be fixed before pushing.",
+  "summary": {
+    "total": ${TOTAL_APIS},
+    "passed": ${PASSED},
+    "failed": ${FAILED},
+    "skipped": ${SKIPPED},
+    "duration_ms": ${TEST_DURATION}
+  },
+  "failed_tests": $(echo "$API_TEST_RESULT" | jq '.failedTests // []'),
+  "skipped_tests": $(echo "$API_TEST_RESULT" | jq '.skippedTests // []'),
+  "llm_prompt": "Please analyze and fix the ${FAILED} failed API test(s). For each failure: 1) Read the error message to understand what went wrong, 2) Check the API implementation in the route file, 3) Verify test data in api_definitions is valid, 4) Fix the API code or test data as needed. Also check .projexlight/feedback/ for detailed error information.",
+  "investigation_paths": [
+    "${PROJECT_ROOT}/.projexlight/feedback/",
+    "${PROJECT_ROOT}/.projexlight/reports/",
+    "${PROJECT_ROOT}/tests/api_definitions/"
+  ],
+  "commands": {
+    "view_logs": "docker logs projexlight-mcp",
+    "rerun_tests": "curl -X POST http://localhost:8766/api/test -H 'Content-Type: application/json' -d '{\"projectPath\": \"${PROJECT_PATH}\", \"api_test_mode\": \"full\"}'"
+  }
+}
+EOF
+)
+
+        echo "$FAILURE_REPORT" | jq '.' > "$FAILURE_REPORT_FILE" 2>/dev/null || echo "$FAILURE_REPORT" > "$FAILURE_REPORT_FILE"
+        cp "$FAILURE_REPORT_FILE" "$FAILURE_LATEST"
+
+        echo ""
+        echo -e "${BLUE}📋 Failure report saved: ${FAILURE_REPORT_FILE}${NC}"
+        echo ""
+        echo -e "${BLUE}🔍 To investigate the failures:${NC}"
+        echo -e "   1. Check MCP server logs:"
+        echo -e "      ${YELLOW}docker logs projexlight-mcp${NC}"
+        echo -e ""
+        echo -e "   2. Review detailed failure reports:"
+        echo -e "      ${YELLOW}${PROJECT_ROOT}/.projexlight/feedback/${NC}"
+        echo -e "      ${YELLOW}${PROJECT_ROOT}/.projexlight/reports/${NC}"
+        echo ""
+        echo -e "${BLUE}══════════════════════════════════════════════════════════════${NC}"
+        echo -e "${BLUE}🤖 LLM NEXT STEP - Call pending-test-failures to get fix instructions:${NC}"
+        echo -e "${BLUE}══════════════════════════════════════════════════════════════${NC}"
+        echo -e ""
+        echo -e "   ${GREEN}MCP Tool:${NC}  projexlight_get_pending_test_failures"
+        echo -e "   ${GREEN}curl:${NC}      curl http://localhost:8766/api/instruction/pending-test-failures"
+        echo -e ""
+        echo -e "   ${YELLOW}The response includes:${NC}"
+        echo -e "   - failures[] with ROOT_CAUSE_ANALYSIS for each"
+        echo -e "   - healingPrompt with step-by-step fix instructions"
+        echo -e "   - investigation_steps to find the root cause"
+        echo -e ""
+        echo -e "   ${YELLOW}After fixing:${NC}"
+        echo -e "   1. git add . && git commit -m 'fix: resolve API test failures'"
+        echo -e "   2. Call projexlight_clear_test_failures (or curl POST .../clear-test-failures)"
+        echo -e "   3. git push (to re-run tests)"
+        echo -e "${BLUE}══════════════════════════════════════════════════════════════${NC}"
+        echo ""
+
+        # Check if running in interactive mode (terminal attached)
+        if [ -t 0 ]; then
+            # Interactive mode - ask the user
+            echo -e "${YELLOW}Do you want to exit and fix the failed APIs? [Y/n]${NC}"
+            read -r -n 1 response </dev/tty
+            echo ""  # New line after response
+
+            # Default to Yes if empty or 'y' or 'Y'
+            case "$response" in
+                [nN])
+                    echo -e "${YELLOW}⚠️  Proceeding with push despite ${FAILED} failed test(s)...${NC}"
+                    # Continue with the push
+                    ;;
+                *)
+                    echo -e "${RED}❌ Push cancelled. Please fix the ${FAILED} failing API(s) and try again.${NC}"
+                    exit 1
+                    ;;
+            esac
+        else
+            # Non-interactive mode (CI/CD) - block by default
+            echo -e "${RED}❌ Push blocked: Running in non-interactive mode with ${FAILED} failed test(s)${NC}"
+            echo -e "${YELLOW}To bypass in CI/CD: git push --no-verify${NC}"
+            exit 1
+        fi
+    fi
+else
+    echo -e "${YELLOW}⚠️  API testing returned no results${NC}"
+fi
+
+# ============================================================
+# STEP 7: Component duplication scan
+# ============================================================
+echo -e "\n${BLUE}🔍 Scanning for duplicate components in changed files...${NC}"
+
+# Include projectPath for multi-project credential routing
+COMPONENT_SCAN_RESULT=$(curl -s -X POST "${MCP_SERVER_URL}/api/components/scan" \
+    -H "Content-Type: application/json" \
+    -d "{
+        \"projectPath\": \"${PROJECT_PATH}\",
+        \"triggered_by\": \"git_push\",
+        \"changed_files\": ${CHANGED_FILES_JSON}
+    }" 2>&1)
+
+if [ $? -eq 0 ] && [ -n "$COMPONENT_SCAN_RESULT" ]; then
+    DUPLICATES_FOUND=$(echo "$COMPONENT_SCAN_RESULT" | jq -r '.summary.duplicateComponentsFound // 0' 2>/dev/null || echo "0")
+
+    echo -e "${GREEN}✓ Component scan completed${NC}"
+
+    if [ "$DUPLICATES_FOUND" -gt 0 ]; then
+        echo -e "  ${YELLOW}⚠️  Similar components found: ${DUPLICATES_FOUND}${NC}"
+        echo -e "  ${YELLOW}   Review details in Leadership Dashboard${NC}"
+    else
+        echo -e "  No duplicate components detected"
+    fi
+else
+    echo -e "${YELLOW}⚠️  Component scan returned no results${NC}"
+fi
+
+# ============================================================
+# STEP 9: Summary
+# ============================================================
+echo -e "\n${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "${GREEN}✅ Pre-push checks completed successfully${NC}"
+echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+
+# Show report locations if any were generated
+if [ "$HAS_VIOLATIONS" = true ] || [ "$HAS_TODOS" = true ]; then
+    echo -e "\n${BLUE}📋 Reports generated:${NC}"
+
+    if [ "$HAS_VIOLATIONS" = true ]; then
+        echo -e "   ${RED}Violations (immediate):${NC} ${PREPUSH_REPORTS_DIR}/"
+    fi
+
+    if [ "$HAS_TODOS" = true ]; then
+        echo -e "   ${YELLOW}TODOs (end-of-sprint):${NC} ${TODOS_REPORTS_DIR}/pre-push_latest.json"
+    fi
+
+    echo ""
+    echo -e "${BLUE}💡 To fix issues with LLM:${NC}"
+    if [ "$HAS_VIOLATIONS" = true ]; then
+        echo -e "   Violations: ${YELLOW}\"Read .projexlight/reports/pre-push/failures_latest.json and fix the issues\"${NC}"
+    fi
+    if [ "$HAS_TODOS" = true ]; then
+        echo -e "   TODOs: ${YELLOW}\"Read .projexlight/reports/todos/pre-push_latest.json and fix the TODO items\"${NC}"
+    fi
+fi
+
+echo ""
+echo -e "${BLUE}📊 View detailed results in Leadership Dashboard${NC}"
+echo ""
+
+exit 0

@@ -1,0 +1,185 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "version": "1.0.0",
+  "description": "Test configuration for UI and API testing with projex_test_mcp",
+
+  "_instructions": {
+    "activeEnvironment": "Set to 'development' for local testing, 'staging' or 'production' for remote environments",
+    "urlNote": "URLs are automatically translated: localhost -> host.docker.internal when running in Docker containers",
+    "usage": "1. Update baseUrl/apiUrl to match your app ports, 2. Set activeEnvironment, 3. Run ./run-all-tests.sh"
+  },
+
+  "environments": {
+    "development": {
+      "baseUrl": "http://localhost:3000",
+      "apiUrl": "http://localhost:3000",
+      "description": "Local development - localhost URLs are auto-translated to host.docker.internal in Docker"
+    },
+    "staging": {
+      "baseUrl": "https://staging.example.com",
+      "apiUrl": "https://api.staging.example.com",
+      "description": "Staging environment for pre-production testing"
+    },
+    "production": {
+      "baseUrl": "https://www.example.com",
+      "apiUrl": "https://api.example.com",
+      "description": "Production environment (read-only tests only)"
+    }
+  },
+
+  "activeEnvironment": "development",
+
+  "browser": {
+    "headless": true,
+    "timeout": 30000,
+    "viewport": {
+      "width": 1280,
+      "height": 720
+    },
+    "slowMo": 0
+  },
+
+  "dynamicFields": {
+    "enabled": true,
+    "description": "Enable dynamic field detection and value generation",
+    "patterns": {
+      "email": "${random_email}",
+      "phone": "${random_phone}",
+      "password": "${random_password}",
+      "date_past": "${date_past}",
+      "date_future": "${date_future}"
+    }
+  },
+
+  "testCredentials": {
+    "default": {
+      "email": "default_test_user@example.com",
+      "password": "DefaultTestPass123!",
+      "description": "Fallback credentials when registration fails or for login-only tests"
+    },
+    "registered": null,
+    "_usage": {
+      "${registered:email}": "Email from last successful registration",
+      "${registered:password}": "Password from last successful registration",
+      "${default:email}": "Default email from this config",
+      "${default:password}": "Default password from this config",
+      "${login:email}": "Uses registered if available, else default",
+      "${login:password}": "Uses registered if available, else default"
+    }
+  },
+
+  "featureValidation": {
+    "enabled": true,
+    "autoRegenerate": true,
+    "syncToDatabase": true,
+    "validateOnUpload": true,
+    "retryFailedTests": true,
+    "maxRetries": 3
+  },
+
+  "selectors": {
+    "healingStrategy": "local_first",
+    "fallbackOrder": [
+      "exact_match",
+      "healing_registry",
+      "bdd_pattern",
+      "llm_generation"
+    ],
+    "registryPath": "tests/selectors/healing-registry.json"
+  },
+
+  "reporting": {
+    "outputDir": "tests/reports",
+    "formats": ["html", "json"],
+    "screenshots": {
+      "onFailure": true,
+      "onSuccess": false
+    }
+  },
+
+  "authentication": {
+    "enabled": false,
+    "method": "cookie",
+    "loginUrl": "/login",
+    "credentials": {
+      "username": "${login:email}",
+      "password": "${login:password}"
+    },
+    "sessionStorage": "tests/config/.auth-session.json",
+
+    "_instructions": "Set 'method' to 'oauth_bypass' to skip OAuth flow and use tokens directly",
+
+    "oauth": {
+      "bypassEnabled": false,
+      "provider": "google",
+      "_supportedProviders": ["google", "github", "microsoft", "okta", "auth0", "custom"],
+
+      "tokens": {
+        "accessToken": "",
+        "refreshToken": "",
+        "idToken": "",
+        "expiresAt": null,
+        "_note": "Set these tokens to bypass OAuth. Get them from browser DevTools after manual login.",
+        "_expiresAtFormats": "Unix timestamp (seconds/ms) or ISO string. Token refreshed 5 min before expiry."
+      },
+
+      "tokenRefresh": {
+        "endpoint": "",
+        "clientId": "",
+        "clientSecret": "",
+        "method": "POST",
+        "bodyFormat": "form",
+        "_supportedFormats": ["form", "json"],
+        "_note": "Configure to auto-refresh tokens when expired. Leave empty to skip auto-refresh.",
+        "_example": {
+          "endpoint": "https://oauth2.googleapis.com/token",
+          "clientId": "your-client-id.apps.googleusercontent.com",
+          "clientSecret": "your-client-secret"
+        }
+      },
+
+      "apiHeaders": {
+        "Authorization": "Bearer ${oauth:accessToken}",
+        "_customHeaders": "Add any custom headers needed for your API"
+      },
+
+      "browserStorage": {
+        "type": "localStorage",
+        "_supportedTypes": ["localStorage", "sessionStorage", "cookie"],
+        "keys": {
+          "accessToken": "access_token",
+          "refreshToken": "refresh_token",
+          "idToken": "id_token",
+          "user": "user_info"
+        },
+        "_note": "Maps config tokens to browser storage keys your app expects"
+      },
+
+      "mockUser": {
+        "id": "test-user-123",
+        "email": "testuser@example.com",
+        "name": "Test User",
+        "picture": "https://example.com/avatar.png",
+        "roles": ["user", "tester"],
+        "_note": "Mock user object to inject into storage if your app needs it"
+      },
+
+      "callbackMocking": {
+        "enabled": false,
+        "callbackUrl": "/auth/callback",
+        "mockResponse": {
+          "code": "mock_auth_code_12345",
+          "state": "${oauth:state}"
+        },
+        "_note": "Enable to intercept OAuth callback and return mock tokens"
+      }
+    }
+  },
+
+  "projexlight": {
+    "syncEnabled": true,
+    "apiUrl": "${PROJEXLIGHT_API_URL}",
+    "projectId": "${PROJEXLIGHT_PROJECT_ID}",
+    "featureUpdateOnFix": true
+  }
+}

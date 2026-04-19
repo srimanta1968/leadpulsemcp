@@ -1,0 +1,19 @@
+{
+  "projectId": "6f3a50a3-8701-42ae-b1c5-aa6e8a4ad0d8",
+  "sprintId": "7f503ef9-3bf1-4ce9-b055-9f4824e676a1",
+  "poolIndex": 1,
+  "encryptedPlatformApiKey": "WDnm//ZKbfu7Wb9iqFiTaIcY6d9fWOsHz/NJ2C1vET59AjqBNNmTNMvtz3qKSQ5pBEpOUZ4kES/MXoRuvWd1kkqMNytNomiSZsoFwLVQoUhK8YUNc1wQirFOIOimLJIhy5bbNiqK3apiZbcm44tBVvPMVRZuzPPp1mOYHOi+/eSwJ6ucxhoBLXBXNlOLsaFbLij/Xc6EYzIrzf1ifw==",
+  "encryptedLLMConfig": "Rog8s9AcwMxm5YBs0lanbGq1FG5b8Ub5VxNQPATInv4ua0J5Hdifpov5QjIS79pvK2r/zd1BEOZNMHcTctCiyQjEdg3YPfwXvGzpHo+EOJKMhE2nfOB5A0kjMQxwis21O8awGonVB6n7avGV8bsVY8r+bjA8DOFVwXRg04sIaan+kt6tAEQAzrhc4SJZB/0hwU5jnHAZMdxDUEIrLooy7XTV2kMnIzBiILOQhG+B8IDkSmJiZkt4xfq23mTzM5VtBb8mJfHSO6Qgiv/Tzo6qOKWnklY7tEaad5U+CRyFkPqLIsO3fzy9CwMkbVSHvvuL45p420wK4xDnc7+CakSi3ViKnPBiUXvG4blPwUwHtvSdaf3FOx3uBuabuRT7WXaXu2xB7SyUSZPfheeZP490XROqDQH7zb1yRat5wFFCNZFfBLgZXoLTaB0V5wZfNCbP8Mq73MOy1+gQlV+L/oqj6D0zweWtOgWoVn0NCe8vMlXwkt2CsSvEMiosjh19QJ05dEDOrBgapw8d0GpImCM03HJogcQjRHvlSdqDK8lzuBe4ru+/IZiW",
+  "configVersion": "1.0.0",
+  "expiresAt": "2026-05-18T22:45:08.719Z",
+  "databaseConfig": {
+    "enabled": true,
+    "type": "mongodb",
+    "host": "host.docker.internal",
+    "port": 27017,
+    "database": "leadpulse_mcp_db",
+    "username": "admin",
+    "password": "password"
+  },
+  "enforceCustomStandards": true
+}

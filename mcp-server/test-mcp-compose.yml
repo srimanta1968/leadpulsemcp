@@ -1,0 +1,195 @@
+version: '3.8'
+#
+# ProjexLight TEST/UI MCP Server - Docker Compose
+# =============================================
+# This file sets up the Test/UI MCP Server using Docker Hub image.
+# The TEST MCP provides UI testing, test execution, and result analysis.
+#
+# Usage:
+#   docker-compose -f test-mcp-compose.yml up -d       # Start Test MCP server
+#   docker-compose -f test-mcp-compose.yml down        # Stop Test MCP server
+#   docker-compose -f test-mcp-compose.yml pull        # Update to latest image
+#
+# Or use the setup script (recommended):
+#   ./setup-test-mcp.sh start
+#
+
+services:
+  # ProjexLight TEST MCP Server - UI Testing & Test Analysis Agent
+  test-mcp-server:
+    image: projexlight/projex-test-mcp:latest
+    container_name: projexlight-test-mcp
+    user: root  # Required for git hooks installation on Windows
+    ports:
+      # Bind to loopback only — see dev-mcp-compose.yml for rationale.
+      # Override with MCP_TEST_BIND=0.0.0.0 only if you know what you're doing.
+      - "${MCP_TEST_BIND:-127.0.0.1}:${MCP_TEST_PORT:-8000}:8000"
+      - "${MCP_TEST_BIND6:-::1}:${MCP_TEST_PORT:-8000}:8000"
+    volumes:
+      # ============================================================
+      # MULTI-PROJECT VOLUME MOUNTS
+      # ============================================================
+      # Owner project (first project that created containers)
+      - ${PROJECT_PATH:-../}:/workspace                                  # Project root (read-write for git hooks)
+
+      # Additional projects (dynamically mounted via setup-all.sh)
+      - ${ADDITIONAL_PROJECT_1:-/dev/null}:/projects/additional1
+      - ${ADDITIONAL_PROJECT_2:-/dev/null}:/projects/additional2
+      - ${ADDITIONAL_PROJECT_3:-/dev/null}:/projects/additional3
+
+      # ============================================================
+      # PER-PROJECT CONFIG & DATA DIRECTORIES
+      # ============================================================
+      - ./feedback:/feedback                                             # Feedback files (read-write)
+      - ${RESULTS_PATH:-../test-results}:/results                        # Test results output
+      - ./mcp-config.json:/app/mcp-config.json:ro  # Owner project configuration
+      - ./registered_projects:/app/registered_projects                   # Multi-project registry
+    extra_hosts:
+      - "host.docker.internal:host-gateway"        # Enable host network access
+    env_file:
+      - .env
+    environment:
+      - WORKSPACE_PATH=/workspace
+      - FEEDBACK_PATH=/feedback
+      - MCP_SERVER_PORT=8000
+      - MCP_SERVER_HOST=0.0.0.0
+      - MCP_CONFIG_FILE=/app/mcp-config.json
+      - MCP_TYPE=test
+      # Multi-project path mappings (JSON format, set by setup-all.sh)
+      - PROJECT_PATH_MAPPINGS=${PROJECT_PATH_MAPPINGS:-}
+      # ProjexLight API URL (read from .env or defaults to production)
+      - PROJEXLIGHT_API_URL=${PROJEXLIGHT_API_URL:-https://api.projexlight.com}
+      # ============================================================
+      # UI & API TESTING: Base URLs for your application
+      # ============================================================
+      # Set these to where your app is running on your host machine.
+      # From Docker, use host.docker.internal to access host machine.
+      #
+      # Examples for UI_BASE_URL:
+      #   Vite (React/Vue):   http://host.docker.internal:5173
+      #   Create React App:   http://host.docker.internal:3000
+      #   Next.js:            http://host.docker.internal:3000
+      #   Angular:            http://host.docker.internal:4200
+      #
+      # Examples for API_BASE_URL:
+      #   Express/Node:       http://host.docker.internal:5000
+      #   Spring Boot:        http://host.docker.internal:8080
+      #
+      # IMPORTANT: Your app must be started with --host flag:
+      #   npm run dev -- --host  (or --host 0.0.0.0)
+      #
+      # Set in .env file or as environment variables before running tests.
+      - UI_BASE_URL=${UI_BASE_URL:-http://host.docker.internal:3000}
+      - API_BASE_URL=${API_BASE_URL:-http://host.docker.internal:5000}
+      # Alias for UI_BASE_URL (backward compatibility)
+      - BASE_URL=${BASE_URL:-${UI_BASE_URL:-http://host.docker.internal:3000}}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+# ============================================================
+# TEST MCP SERVER CAPABILITIES
+# ============================================================
+#
+# The Test/UI MCP Server provides:
+#   - UI test execution and analysis
+#   - Test result processing
+#   - Screenshot capture and comparison
+#   - Test report generation
+#   - Accessibility testing
+#   - Visual regression testing
+#
+# ============================================================
+# USAGE INSTRUCTIONS
+# ============================================================
+#
+# 1. Prerequisites:
+#    - Docker installed and running
+#    - mcp-config.json file in this directory
+#    - .env file with MCP_ENCRYPTION_KEY
+#
+# 2. Quick Start:
+#    docker-compose -f test-mcp-compose.yml up -d
+#
+# 3. Check Status:
+#    docker-compose -f test-mcp-compose.yml ps
+#    curl http://localhost:8000/health
+#
+# 4. View Logs:
+#    docker-compose -f test-mcp-compose.yml logs -f
+#
+# 5. Update to Latest:
+#    docker-compose -f test-mcp-compose.yml pull
+#    docker-compose -f test-mcp-compose.yml up -d
+#
+# 6. Stop Server:
+#    docker-compose -f test-mcp-compose.yml down
+#
+# ============================================================
+# CONFIGURATION
+# ============================================================
+#
+# Authentication (choose one method):
+#
+# Method 1 - mcp-config.json (Recommended for Developers):
+#   Place mcp-config.json in this directory (from CLI export)
+#   It will be auto-decrypted using the project ID
+#
+# Method 2 - Environment Variables (For QA/Production):
+#   Set these in .env file:
+#   PROJEXLIGHT_API_KEY  - ProjexLight session API key
+#   OPENAI_API_KEY       - OpenAI API key (for LLM healing)
+#
+# Priority: mcp-config.json > environment variables
+#
+# Other environment variables:
+#   MCP_TEST_PORT       - Port to expose (default: 8000)
+#   PROJEXLIGHT_API_URL - API server URL
+#   UI_BASE_URL         - Your frontend app URL (default: http://host.docker.internal:3000)
+#   API_BASE_URL        - Your backend API URL (default: http://host.docker.internal:5000)
+#   BASE_URL            - Alias for UI_BASE_URL
+#
+# ============================================================
+# UI TESTING SETUP (IMPORTANT!)
+# ============================================================
+#
+# Step 1: Start your web app with --host flag
+#   npm run dev -- --host
+#   (The --host flag exposes the app so Docker can access it)
+#
+# Step 2: Set environment variables in .env file:
+#   # For Vite (React/Vue)
+#   UI_BASE_URL=http://host.docker.internal:5173
+#   API_BASE_URL=http://host.docker.internal:5000
+#
+#   # For Create React App / Next.js
+#   UI_BASE_URL=http://host.docker.internal:3000
+#   API_BASE_URL=http://host.docker.internal:5000
+#
+# Step 3: Configure tests/config/test-config.json:
+#   {
+#     "testCredentials": {
+#       "default": {"email": "YOUR_EMAIL", "password": "YOUR_PASSWORD"}
+#     },
+#     "loginConfig": {
+#       "loginUrl": "/login",
+#       "emailField": "email",         // Match your form field name
+#       "passwordField": "password",   // Match your form field name
+#       "submitButton": "Login",       // Text on your login button
+#       "successIndicator": "Dashboard" // Text shown after login
+#     }
+#   }
+#
+# Step 4: Verify connectivity:
+#   docker exec projexlight-test-mcp curl -I http://host.docker.internal:3000
+#
+# Volumes:
+#   /workspace         - Your project source code (read-only)
+#   /feedback          - Test feedback files
+#   /results           - Test results output
+#   /app/mcp-config.json - Encrypted project configuration
+#

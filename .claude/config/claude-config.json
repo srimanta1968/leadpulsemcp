@@ -1,0 +1,29 @@
+{
+  "tool": "claude",
+  "version": "1.0",
+  "exportMode": "new_repository",
+  "selectedPurposes": [
+    "api_development",
+    "unit_tests",
+    "db_schema_design"
+  ],
+  "frameworkConfig": {
+    "platform": "web",
+    "backend": {
+      "framework": "fastapi",
+      "language": "python"
+    },
+    "frontend": {
+      "framework": "react",
+      "language": "typescript",
+      "styling": "tailwind"
+    },
+    "database": {
+      "type": "mongodb"
+    },
+    "testing": {
+      "unitFramework": "jest",
+      "e2eFramework": "playwright"
+    }
+  }
+}

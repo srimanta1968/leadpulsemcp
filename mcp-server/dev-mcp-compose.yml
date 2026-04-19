@@ -1,0 +1,132 @@
+version: '3.8'
+#
+# ProjexLight DEV MCP Server - Docker Compose
+# =============================================
+# This file sets up the Development MCP Server using Docker Hub image.
+# The DEV MCP provides code analysis, review, and development assistance.
+#
+# Usage:
+#   docker-compose -f dev-mcp-compose.yml up -d       # Start Dev MCP server
+#   docker-compose -f dev-mcp-compose.yml down        # Stop Dev MCP server
+#   docker-compose -f dev-mcp-compose.yml pull        # Update to latest image
+#
+# Or use the setup script (recommended):
+#   ./setup-dev-mcp.sh start
+#
+
+services:
+  # ProjexLight DEV MCP Server - Code Review & Development Agent
+  dev-mcp-server:
+    image: projexlight/projex-dev-mcp:latest
+    container_name: projexlight-dev-mcp
+    user: root  # Required for git hooks installation on Windows
+    ports:
+      # Bind to loopback only — the MCP HTTP API has no per-request auth and
+      # is meant to be reached by tooling on the same machine. Binding to
+      # 0.0.0.0 would expose it to anything that can reach the host.
+      # Override with MCP_DEV_BIND=0.0.0.0 only if you know what you're doing.
+      #
+      # Two mappings: IPv4 127.0.0.1 and IPv6 ::1. Some browsers / DNS
+      # configs resolve "localhost" to ::1 first; without an IPv6 listener
+      # they fall back to IPv4 with a small delay. Both are loopback-only.
+      - "${MCP_DEV_BIND:-127.0.0.1}:${MCP_DEV_PORT:-8766}:8766"
+      - "${MCP_DEV_BIND6:-::1}:${MCP_DEV_PORT:-8766}:8766"
+    volumes:
+      # ============================================================
+      # MULTI-PROJECT VOLUME MOUNTS
+      # ============================================================
+      # Owner project (first project that created containers)
+      - ../:/workspace                             # Project root (read-write for git hooks)
+
+      # Additional projects (dynamically mounted via setup-all.sh)
+      # These are set via .env file when new projects are registered
+      - ${ADDITIONAL_PROJECT_1:-/dev/null}:/projects/additional1
+      - ${ADDITIONAL_PROJECT_2:-/dev/null}:/projects/additional2
+      - ${ADDITIONAL_PROJECT_3:-/dev/null}:/projects/additional3
+
+      # ============================================================
+      # PER-PROJECT CONFIG & DATA DIRECTORIES
+      # ============================================================
+      - ./feedback:/feedback                       # Feedback files (read-write)
+      - ./mcp-config.json:/app/mcp-config.json:ro  # Owner project configuration
+      - ./registered_projects:/app/registered_projects  # Multi-project registry
+
+      # Per-project .projexlight folders (mounted automatically)
+      # Owner project: ../.projexlight is accessible via /workspace/.projexlight
+      # Additional projects: accessible via /projects/additionalN/.projexlight
+
+    extra_hosts:
+      - "host.docker.internal:host-gateway"        # Enable host network access
+    env_file:
+      - .env
+    environment:
+      - WORKSPACE_PATH=/workspace
+      - FEEDBACK_PATH=/feedback
+      - MCP_SERVER_PORT=8766
+      - MCP_SERVER_HOST=0.0.0.0
+      - MCP_CONFIG_FILE=/app/mcp-config.json
+      - MCP_TYPE=dev
+      # Multi-project path mappings (JSON format, set by setup-all.sh)
+      - PROJECT_PATH_MAPPINGS=${PROJECT_PATH_MAPPINGS:-}
+      # ProjexLight API URL (read from .env or defaults to production)
+      - PROJEXLIGHT_API_URL=${PROJEXLIGHT_API_URL:-https://api.projexlight.com}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8766/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+# ============================================================
+# DEV MCP SERVER CAPABILITIES
+# ============================================================
+#
+# The Development MCP Server provides:
+#   - Code analysis and review
+#   - Development assistance
+#   - Database operations (PostgreSQL, MySQL, MongoDB, Redis, SQLite)
+#   - Cassandra and DynamoDB support (full build)
+#   - Workspace file operations
+#   - Project configuration management
+#
+# ============================================================
+# USAGE INSTRUCTIONS
+# ============================================================
+#
+# 1. Prerequisites:
+#    - Docker installed and running
+#    - mcp-config.json file in this directory
+#    - .env file with MCP_ENCRYPTION_KEY
+#
+# 2. Quick Start:
+#    docker-compose -f dev-mcp-compose.yml up -d
+#
+# 3. Check Status:
+#    docker-compose -f dev-mcp-compose.yml ps
+#    curl http://localhost:8766/health
+#
+# 4. View Logs:
+#    docker-compose -f dev-mcp-compose.yml logs -f
+#
+# 5. Update to Latest:
+#    docker-compose -f dev-mcp-compose.yml pull
+#    docker-compose -f dev-mcp-compose.yml up -d
+#
+# 6. Stop Server:
+#    docker-compose -f dev-mcp-compose.yml down
+#
+# ============================================================
+# CONFIGURATION
+# ============================================================
+#
+# Environment variables (set in .env or environment):
+#   MCP_DEV_PORT       - Port to expose (default: 8766)
+#   MCP_ENCRYPTION_KEY - Key for decrypting mcp-config.json
+#   PROJEXLIGHT_API_URL - API server URL
+#
+# Volumes:
+#   /workspace         - Your project source code (read-only)
+#   /feedback          - Code review feedback files
+#   /app/mcp-config.json - Encrypted project configuration
+#

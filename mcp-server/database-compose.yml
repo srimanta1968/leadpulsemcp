@@ -1,0 +1,26 @@
+version: '3.8'
+# Auto-generated MongoDB configuration
+# Database: leadpulse_mcp_db
+
+services:
+  mongodb:
+    image: mongo:6.0
+    container_name: projexlight-mongodb
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=password
+      - MONGO_INITDB_DATABASE=leadpulse_mcp_db
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+      - ../init-scripts:/docker-entrypoint-initdb.d
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ismaster')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  mongodb_data:

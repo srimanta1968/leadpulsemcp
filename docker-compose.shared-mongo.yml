@@ -1,0 +1,61 @@
+# Shared MongoDB server for the MCP fleet.
+#
+# Topology:
+#   ONE Mongo instance (this file) serves MANY leadpulse-mcp containers.
+#   Mirrors the production pattern where Mongo Atlas / RDS-style Mongo runs
+#   independently and every worker connects to it via the URL injected at
+#   bootstrap time — NO Mongo is bundled into any MCP image.
+#
+# Usage:
+#   docker-compose -f docker-compose.shared-mongo.yml up -d
+#   docker-compose -f docker-compose.shared-mongo.yml down
+#
+# Defaults: admin/password on 27017. Override with MONGO_USER/MONGO_PASSWORD.
+
+services:
+  mongodb:
+    image: mongo:7
+    container_name: leadpulse_shared_mongodb
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-admin}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:-password}
+    ports:
+      - "${MONGO_HOST_PORT:-27017}:27017"
+    volumes:
+      - mongodb_data:/data/db
+      - mongodb_config:/data/configdb
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet -u $$MONGO_INITDB_ROOT_USERNAME -p $$MONGO_INITDB_ROOT_PASSWORD --authenticationDatabase admin --eval 'db.runCommand({ping:1}).ok' | grep -q 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - leadpulse_shared
+
+  mongo-express:
+    image: mongo-express:1
+    container_name: leadpulse_shared_mongo_express
+    environment:
+      ME_CONFIG_MONGODB_ADMINUSERNAME: ${MONGO_USER:-admin}
+      ME_CONFIG_MONGODB_ADMINPASSWORD: ${MONGO_PASSWORD:-password}
+      ME_CONFIG_MONGODB_URL: mongodb://${MONGO_USER:-admin}:${MONGO_PASSWORD:-password}@mongodb:27017/
+      ME_CONFIG_BASICAUTH: "false"
+    ports:
+      - "${MONGO_EXPRESS_HOST_PORT:-8081}:8081"
+    depends_on:
+      - mongodb
+    restart: unless-stopped
+    networks:
+      - leadpulse_shared
+
+volumes:
+  mongodb_data:
+    driver: local
+  mongodb_config:
+    driver: local
+
+networks:
+  leadpulse_shared:
+    name: leadpulse_shared
+    driver: bridge

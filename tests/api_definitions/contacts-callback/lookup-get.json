@@ -1,0 +1,12 @@
+{
+  "name": "GET /api/v1/contacts/lookup - CRM looks up a campaign contact",
+  "endpoint": "/api/v1/contacts/lookup",
+  "method": "GET",
+  "requiresAuth": false,
+  "expectedStatus": 200,
+  "taskId": "cf6027ae-08dd-42b2-a37e-95c4404d41c1",
+  "sprintId": "7f503ef9-3bf1-4ce9-b055-9f4824e676a1",
+  "priority": 55,
+  "testability": "manual",
+  "skipReason": "Inbound CRM->MCP endpoint is HMAC-signed by the CRM using a secret issued via /api/mcp/register; not reachable from the regression harness. Covered by integration tests from the CRM side and by unit tests of hmac_signing.verify."
+}

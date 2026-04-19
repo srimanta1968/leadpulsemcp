@@ -1,0 +1,120 @@
+ 1. Workload per user                                                                                                                                                                           
+                                                                                                                                                                                                 
+  - 10,000 emails/day, typical 8-hour send window                                                                                                                                                
+  - Average: ~21 sends/min; peak burst during window ~3–5× average                                                                                                                               
+  - SendGrid HTTP API RTT ~200–400ms → one agent sustains ~3–5 sends/sec (~100k–150k/day burst, ~5k–40k/day averaged, matches design doc §20.4)                                                  
+                                                                                                                                                                                                 
+  2. Sender agents per MCP container (memory-bound, ~80–200MB/agent in Node)                                                                                                                     
+
+  ┌────────┬─────────────┬──────────┬────────┬────────────────────────┐
+  │  Tier  │     EC2     │ vCPU/RAM │ Agents │ Sustained capacity/day │
+  ├────────┼─────────────┼──────────┼────────┼────────────────────────┤
+  │ tiny   │ t3.small    │ 2 / 2GB  │ 10     │ 50k                    │
+  ├────────┼─────────────┼──────────┼────────┼────────────────────────┤
+  │ small  │ t3.medium   │ 2 / 4GB  │ 30     │ 250k                   │
+  ├────────┼─────────────┼──────────┼────────┼────────────────────────┤
+  │ medium │ t3.large    │ 2 / 8GB  │ 80     │ 1M                     │
+  ├────────┼─────────────┼──────────┼────────┼────────────────────────┤
+  │ large  │ m6i.xlarge  │ 4 / 16GB │ 200    │ 5M                     │
+  ├────────┼─────────────┼──────────┼────────┼────────────────────────┤
+  │ whale  │ m6i.2xlarge │ 8 / 32GB │ 400    │ 15M                    │
+  └────────┴─────────────┴──────────┴────────┴────────────────────────┘
+
+  Practical ceiling: stop at ~400 agents/container — beyond that SendGrid per-key rate limits and container networking (ENI bandwidth) become the bottleneck, not the instance.
+
+  3. Option 1 — Common MCP Pool (shared multi-tenant)
+
+  Containers are anonymous workers. Tenants are partitioned in send_queue by tenant_user_id; fair-scheduling via weighted round-robin. Send windows across timezones naturally smooth load.
+
+  1,000 users × 10k/day = 10M/day
+  - 60% target utilization → need 16.7M/day capacity
+  - 4× large (m6i.xlarge) = 20M/day headroom
+  - Cost: 4 × $170 = $680/mo + ~$100 NAT/LB ≈ $780/mo
+  - Per user: $0.78/month ≈ $0.026/user/day
+
+  100,000 users × 10k/day = 1B/day
+  - ~330× large containers (plus +20% for peak/failover) = ~400 containers
+  - Cost: 400 × $170 = $68,000/mo
+  - Per user: $0.68/month ≈ $0.023/user/day
+
+  4. Option 2 — Dedicated container per user (LeadPulse-hosted)
+
+  Each user pinned to their own sized container. Container idles during off-window (user's utilization ~7–20%).
+
+  Per user @ 10k/day: tiny (t3.small) is sufficient but 5× overprovisioned
+  - Cost: $20/user/month ≈ $0.67/user/day
+  - Cannot downsize — 10k/day still needs ≥10 agents for 8-hour window compression
+
+  1,000 users: 1,000 containers = $20,000/mo
+  100,000 users: 100,000 containers = $2,000,000/mo + massive ECS control-plane / registry / IAM pressure
+
+  5. Side-by-side
+
+  ┌─────────────────────────┬──────────────────────────────────────────────────────────┬──────────────────────────────────────────────────────────┐
+  │        Dimension        │                       Shared Pool                        │                    Dedicated per user                    │
+  ├─────────────────────────┼──────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────┤
+  │ Cost @ 1k users         │ $780/mo ($0.026/user/day)                                │ $20,000/mo ($0.67/user/day)                              │
+  ├─────────────────────────┼──────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────┤
+  │ Cost @ 100k users       │ $68,000/mo ($0.023/user/day)                             │ $2M/mo ($0.67/user/day)                                  │
+  ├─────────────────────────┼──────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────┤
+  │ Cost ratio              │ 1×                                                       │ ~29×                                                     │
+  ├─────────────────────────┼──────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────┤
+  │ Noisy neighbor          │ Real risk — needs per-tenant rate limit + fair scheduler │ None                                                     │
+  ├─────────────────────────┼──────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────┤
+  │ Isolation               │ Logical (code)                                           │ Physical                                                 │
+  ├─────────────────────────┼──────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────┤
+  │ Ops complexity @ 100k   │ Manageable (~400 containers)                             │ Brutal (100k containers to monitor, register, autoscale) │
+  ├─────────────────────────┼──────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────┤
+  │ Cold start for new user │ Zero                                                     │ 2–5 min (CFN + EC2 boot)                                 │
+  ├─────────────────────────┼──────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────┤
+  │ SendGrid key handling   │ /resolve-secret per send, 10-min cache                   │ Local to container                                       │
+  ├─────────────────────────┼──────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────┤
+  │ Compliance story        │ Requires strict tenant partitioning in Mongo             │ Clean ("your container, your data")                      │
+  ├─────────────────────────┼──────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────┤
+  │ Send-window idle cost   │ Absorbed by other tenants                                │ Paid by user                                             │
+  ├─────────────────────────┼──────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────┤
+  │ Failure blast radius    │ 1 container down = many tenants degrade                  │ 1 container down = 1 tenant down                         │
+  ├─────────────────────────┼──────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────┤
+  │ Billing alignment       │ Cost-per-send pricing                                    │ Flat dedicated-tier pricing                              │
+  └─────────────────────────┴──────────────────────────────────────────────────────────┴──────────────────────────────────────────────────────────┘
+
+  6. Recommended strategy — tiered hybrid
+
+  Don't pick one. Make the plan tier decide:
+
+  1. Starter / Growth (≤50k/day): Shared Pool — this is the default for 95% of users. One logical fleet, sharded by tenant_user_id. Fair-scheduling via token bucket per tenant inside the sender
+   agent so no tenant can starve others.
+  2. Pro (50k–500k/day): Dedicated small/medium container — launched on LeadPulse ECS, still LeadPulse-managed. Pays ~$45–80/mo.
+  3. Enterprise (≥500k/day OR compliance requirement): BYOC — tenant runs their own EC2 per §20 of the design doc. Zero infra cost to LeadPulse.
+
+  Migration path is already in the doc (§20.11) — drain from shared pool → launch dedicated → migrate in-flight shards. Keep it.
+
+  7. Self-hosted Mongo on EC2 — the real bottleneck
+
+  At 1B sends/day you're doing ~12k writes/sec average, ~40–60k/sec peak (campaign_contacts upsert + send_queue insert + send_queue update + refined_contacts merge = 4 writes/send).
+
+  Sharded cluster sized for 100k users:
+  - Shard by tenant_user_id (hashed) — 10 shards × 3-node replica sets = 30 nodes
+  - r6i.2xlarge (8vCPU/64GB) × 30 ≈ $10,000/mo
+  - EBS gp3 storage ~5 TB × $0.10 = $500/mo
+  - Backups (snapshots + S3) ~$500/mo
+  - Mongo total: ~$11k/mo = $0.11/user/month at 100k
+
+  Growth path:
+  - Year 1 (1k users): Single 3-node replica set on r6i.large, no sharding. ~$600/mo.
+  - Year 2 (10k users): 3-shard cluster on r6i.xlarge, shard on tenant_user_id. ~$3k/mo.
+  - Year 3 (100k users): 10-shard cluster on r6i.2xlarge, add read replicas per shard for dashboard queries. ~$11k/mo.
+
+  Pre-declare the shard key (tenant_user_id) from day one so you never have to reshard. That's the single most important decision.
+
+  8. Bottom line
+
+  - Shared pool is ~30× cheaper and is the only sane default for a SaaS at 1k→100k scale.
+  - Never offer dedicated containers as the default — offer them as a paid upgrade for noisy or regulated tenants.
+  - Your true scale risk is Mongo, not MCP containers. Budget architecture time for sharding, not for EC2 counts.
+  - Total all-in infra cost at 100k users with shared pool + managed Mongo: ~$80k/mo ≈ $0.80/user/month — gives you a healthy margin on even a $10/month plan.
+
+  Wrote 2 memories (ctrl+o to expand)   
+                                                                                          
+● Summary: Shared pool wins decisively — $0.023/user/day at 100k users vs $0.67/user/day dedicated (~30× cheaper). Recommend tiered hybrid: shared pool as default, dedicated container for
+  Pro-tier, BYOC for Enterprise. Mongo shard-key (tenant_user_id) is your most load-bearing early decision.    

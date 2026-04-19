@@ -1,0 +1,120 @@
+{
+  "sprintId": "7f503ef9-3bf1-4ce9-b055-9f4824e676a1",
+  "sprintName": "Quick Prototype Sprint",
+  "totalTasks": 16,
+  "tasks": [
+    {
+      "taskId": "ad43f1af-23b1-4686-8316-64e399c1d6a5",
+      "taskNumber": 1,
+      "title": "Setup User Registration Endpoint",
+      "status": "not_started",
+      "taskType": "backend"
+    },
+    {
+      "taskId": "d9fd9b41-ef65-48df-bfc3-9d76a37cc141",
+      "taskNumber": 2,
+      "title": "Implement Password Hashing",
+      "status": "not_started",
+      "taskType": "backend"
+    },
+    {
+      "taskId": "61a1c8c6-a680-4e4b-9f1f-860ba3a169fd",
+      "taskNumber": 3,
+      "title": "Create User Login Endpoint",
+      "status": "not_started",
+      "taskType": "backend"
+    },
+    {
+      "taskId": "1046988c-c16e-4744-bb7b-504a03fe70f5",
+      "taskNumber": 4,
+      "title": "Create Campaign Management API",
+      "status": "not_started",
+      "taskType": "backend"
+    },
+    {
+      "taskId": "f23f9abc-256d-4a80-b024-a60ae3d2020b",
+      "taskNumber": 5,
+      "title": "Implement Campaign Scheduling Logic",
+      "status": "not_started",
+      "taskType": "backend"
+    },
+    {
+      "taskId": "7dfe3e56-d0ba-4ebf-b708-fd4db9ac3cbc",
+      "taskNumber": 6,
+      "title": "Log Campaign Sending Status",
+      "status": "not_started",
+      "taskType": "backend"
+    },
+    {
+      "taskId": "27a2f322-1812-4c9b-a879-592c0300e07c",
+      "taskNumber": 7,
+      "title": "Implement Contact Upload Endpoint",
+      "status": "not_started",
+      "taskType": "backend"
+    },
+    {
+      "taskId": "3904b263-b54f-45cb-a089-be755e71c04a",
+      "taskNumber": 8,
+      "title": "Create Contact Parsing Logic",
+      "status": "not_started",
+      "taskType": "backend"
+    },
+    {
+      "taskId": "843f7c8f-a146-4e90-8073-1dc9f21b7421",
+      "taskNumber": 9,
+      "title": "Implement Contact Management Features",
+      "status": "not_started",
+      "taskType": "backend"
+    },
+    {
+      "taskId": "e09ca6c5-236a-465a-bef6-cb7f8d4ea3c2",
+      "taskNumber": 10,
+      "title": "Create Campaign Status Tracking API",
+      "status": "not_started",
+      "taskType": "backend"
+    },
+    {
+      "taskId": "7a2b0318-58b0-438c-b453-14346658f094",
+      "taskNumber": 11,
+      "title": "Implement Error Handling for Campaigns",
+      "status": "not_started",
+      "taskType": "backend"
+    },
+    {
+      "taskId": "8bbe32f0-0724-4e08-ab8c-d71d663ea6a5",
+      "taskNumber": 12,
+      "title": "Frontend Registration and Login Forms",
+      "status": "not_started",
+      "taskType": "frontend"
+    },
+    {
+      "taskId": "2b6d88e6-ae72-4e31-840f-eeac566540b6",
+      "taskNumber": 13,
+      "title": "Frontend Campaign Creation Form",
+      "status": "not_started",
+      "taskType": "frontend"
+    },
+    {
+      "taskId": "b0c7e8fa-60fd-4901-a353-c9ec453a6cb6",
+      "taskNumber": 14,
+      "title": "Frontend Contact Upload Interface",
+      "status": "not_started",
+      "taskType": "frontend"
+    },
+    {
+      "taskId": "12d6d109-8df0-43a0-b7a8-fa66ed0ef00d",
+      "taskNumber": 15,
+      "title": "Frontend Campaign Status Display",
+      "status": "not_started",
+      "taskType": "frontend"
+    },
+    {
+      "taskId": "afb6f68b-e6d4-4527-aadc-3bd36049e65b",
+      "taskNumber": 16,
+      "title": "Testing Campaign Status Tracking Functionality",
+      "status": "not_started",
+      "taskType": "testing"
+    }
+  ],
+  "note": "Detailed instructions are delivered via MCP API. Call projexlight_get_instruction with taskId."
+}

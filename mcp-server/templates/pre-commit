@@ -1,0 +1,778 @@
+#!/bin/bash
+
+# ProjexLight MCP Pre-Commit Hook
+# Automatically scans staged files for duplicate APIs and components before commit
+# This hook is installed automatically by the MCP server on startup
+# Generates report in .projexlight/reports/pre-commit/ for LLM review
+
+set -e
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Configuration
+MCP_SERVER_URL="${MCP_SERVER_URL:-http://localhost:8766}"
+
+# Detect project root (handle both Docker and local execution)
+if [ -d "/workspace" ] && [ -f "/workspace/package.json" -o -f "/workspace/pyproject.toml" ]; then
+    PROJECT_ROOT="/workspace"
+else
+    PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+fi
+
+# ============================================================
+# MULTI-PROJECT SUPPORT: Detect project path for credential routing
+# ============================================================
+# Convert Windows path to Unix format for Docker compatibility
+# C:\Users\name\project -> /c/Users/name/project
+to_unix_path() {
+    local path="$1"
+    # Already Unix path
+    if [[ "$path" == /* ]]; then
+        echo "$path"
+        return
+    fi
+    # Convert backslashes to forward slashes
+    path="${path//\\//}"
+    # Convert Windows drive letter: C:/... -> /c/...
+    if [[ "$path" =~ ^([A-Za-z]):(.*)$ ]]; then
+        local drive="${BASH_REMATCH[1]}"
+        local rest="${BASH_REMATCH[2]}"
+        path="/${drive,,}${rest}"
+    fi
+    echo "$path"
+}
+
+# Get the project path for multi-project context routing
+# Priority: PROJEXLIGHT_PROJECT_PATH env var > git repo root converted to Unix
+if [ -n "${PROJEXLIGHT_PROJECT_PATH:-}" ]; then
+    PROJECT_PATH="$PROJEXLIGHT_PROJECT_PATH"
+elif [ -d "/workspace" ]; then
+    # Inside Docker - check if HOST_PROJECT_PATH was passed
+    PROJECT_PATH="${HOST_PROJECT_PATH:-/workspace}"
+else
+    # On host - convert Windows path to Unix format
+    PROJECT_PATH=$(to_unix_path "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
+fi
+
+echo -e "   ${BLUE}Project path (for multi-project):${NC} ${PROJECT_PATH}"
+
+# Create reports directories
+# pre-commit/ - Immediate fixes required (duplicates, blocking violations)
+# todos/ - Can be fixed at end of sprint
+PRECOMMIT_REPORTS_DIR="${PROJECT_ROOT}/.projexlight/reports/pre-commit"
+TODOS_REPORTS_DIR="${PROJECT_ROOT}/.projexlight/reports/todos"
+mkdir -p "$PRECOMMIT_REPORTS_DIR"
+mkdir -p "$TODOS_REPORTS_DIR"
+
+# Generate unique report filenames with timestamp
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+PRECOMMIT_REPORT_FILE="${PRECOMMIT_REPORTS_DIR}/violations_${TIMESTAMP}.json"
+PRECOMMIT_LATEST="${PRECOMMIT_REPORTS_DIR}/latest.json"
+TODOS_REPORT_FILE="${TODOS_REPORTS_DIR}/todos_${TIMESTAMP}.json"
+TODOS_LATEST="${TODOS_REPORTS_DIR}/latest.json"
+
+# Track if we have issues to report
+HAS_PRECOMMIT_ISSUES=false
+HAS_TODOS=false
+
+echo -e "${BLUE}🔍 ProjexLight Pre-Commit Duplicate Scan${NC}"
+echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+
+# Check if MCP server is running
+if ! curl -s "${MCP_SERVER_URL}/health" > /dev/null 2>&1; then
+    echo -e "${YELLOW}⚠️  MCP server not running at ${MCP_SERVER_URL}${NC}"
+    echo -e "${YELLOW}   Pre-commit scan skipped (graceful degradation)${NC}"
+    echo -e "${YELLOW}   Start MCP server: cd mcp-server && ./setup-all.sh${NC}"
+    exit 0
+fi
+
+echo -e "${GREEN}✓ MCP server is running${NC}"
+
+# Get list of staged files
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null || echo "")
+
+if [ -z "$STAGED_FILES" ]; then
+    echo -e "${YELLOW}⚠️  No files staged for commit${NC}"
+    exit 0
+fi
+
+# Count staged files
+FILE_COUNT=$(echo "$STAGED_FILES" | wc -l)
+echo -e "\n${BLUE}📋 Scanning ${FILE_COUNT} staged file(s)...${NC}"
+
+# Convert file list to JSON array
+FILES_JSON=$(echo "$STAGED_FILES" | jq -R -s -c 'split("\n")[:-1]')
+
+# Send request to MCP server with workspace path and project path for multi-project routing
+SCAN_RESULT=$(curl -s -X POST "${MCP_SERVER_URL}/api/pre-commit-scan" \
+    -H "Content-Type: application/json" \
+    -d "{\"stagedFiles\": ${FILES_JSON}, \"workspacePath\": \"${PROJECT_ROOT}\", \"projectPath\": \"${PROJECT_PATH}\"}" 2>&1)
+
+CURL_EXIT=$?
+
+if [ $CURL_EXIT -ne 0 ]; then
+    echo -e "${RED}❌ Failed to connect to MCP server${NC}"
+    echo -e "${YELLOW}   Allowing commit to proceed (graceful degradation)${NC}"
+    exit 0
+fi
+
+# Parse results
+SUCCESS=$(echo "$SCAN_RESULT" | jq -r '.success // false' 2>/dev/null || echo "false")
+BLOCKING=$(echo "$SCAN_RESULT" | jq -r '.blocking // false' 2>/dev/null || echo "false")
+DUPLICATES_FOUND=$(echo "$SCAN_RESULT" | jq -r '.duplicatesFound // false' 2>/dev/null || echo "false")
+DUPLICATE_COUNT=$(echo "$SCAN_RESULT" | jq -r '.duplicates.count // 0' 2>/dev/null || echo "0")
+WARNING_COUNT=$(echo "$SCAN_RESULT" | jq -r '.warnings | length // 0' 2>/dev/null || echo "0")
+SCANNED_FILES=$(echo "$SCAN_RESULT" | jq -r '.scannedFiles // 0' 2>/dev/null || echo "0")
+SUMMARY=$(echo "$SCAN_RESULT" | jq -r '.summary // "Scan completed"' 2>/dev/null || echo "Scan completed")
+
+echo -e "\n${BLUE}📊 Scan Results:${NC}"
+echo -e "   Files scanned: ${SCANNED_FILES}"
+
+if [ "$DUPLICATES_FOUND" = "true" ]; then
+    if [ "$DUPLICATE_COUNT" -gt 0 ]; then
+        echo -e "   ${RED}🚨 Duplicate APIs: ${DUPLICATE_COUNT}${NC}"
+    fi
+
+    if [ "$WARNING_COUNT" -gt 0 ]; then
+        echo -e "   ${YELLOW}⚠️  Similar components: ${WARNING_COUNT}${NC}"
+    fi
+else
+    echo -e "   ${GREEN}✓ No duplicates detected${NC}"
+fi
+
+# Handle blocking duplicates
+if [ "$BLOCKING" = "true" ]; then
+    HAS_PRECOMMIT_ISSUES=true
+
+    echo -e "\n${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${RED}🚨 COMMIT BLOCKED: Duplicate APIs detected${NC}"
+    echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+
+    # Show duplicate details
+    echo -e "\n${RED}Duplicate APIs found:${NC}\n"
+    echo "$SCAN_RESULT" | jq -r '.duplicates.apis[] |
+        "  🚨 \(.newAPI.method) \(.newAPI.endpoint)\n" +
+        "     File: \(.newAPI.filePath)\n" +
+        "     Conflicts with: \(.existingAPI.filePath)\n" +
+        "     Sprint: \(.existingAPI.sprintName // "Unknown")\n"'
+
+    echo -e "${YELLOW}Action Required:${NC}"
+    echo -e "  1. ✅ Reuse existing API (recommended)"
+    echo -e "  2. 🔄 Modify endpoint path to make it unique"
+    echo -e "  3. 📝 Add justification comment if duplicate is intentional"
+    echo -e ""
+    echo -e "${YELLOW}To bypass this check (not recommended):${NC}"
+    echo -e "  git commit --no-verify -m \"your message\""
+    echo -e ""
+
+    # ═══════════════════════════════════════════════════════════════════════════════
+    # SAVE PRE-COMMIT VIOLATIONS REPORT
+    # ═══════════════════════════════════════════════════════════════════════════════
+    PRECOMMIT_REPORT=$(cat <<EOF
+{
+  "reportType": "pre-commit-violations",
+  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "status": "BLOCKED",
+  "severity": "critical",
+  "staged_files": ${FILES_JSON},
+  "violations": {
+    "duplicate_apis": {
+      "count": ${DUPLICATE_COUNT},
+      "blocking": true,
+      "items": $(echo "$SCAN_RESULT" | jq '.duplicates.apis // []')
+    },
+    "warnings": $(echo "$SCAN_RESULT" | jq '.warnings // []')
+  },
+  "action_required": true,
+  "llm_prompt": "Please fix the following pre-commit violations. These are BLOCKING issues that must be resolved before committing:\n\n## Duplicate APIs Detected (${DUPLICATE_COUNT})\n\nThe following APIs conflict with existing endpoints:\n\n$(echo "$SCAN_RESULT" | jq -r '.duplicates.apis[]? | "- **\(.newAPI.method) \(.newAPI.endpoint)** in \(.newAPI.filePath)\n  Conflicts with: \(.existingAPI.filePath)\n  Solution: Either rename your endpoint or reuse the existing API.\n"' | sed 's/"/\\"/g')\n\n## How to Fix\n\n1. **Recommended**: Reuse the existing API instead of creating a duplicate\n2. **Alternative**: Rename your endpoint to make it unique\n3. Search for existing APIs: \`projexlight_search_apis(pattern: 'your-endpoint')\`"
+}
+EOF
+)
+    echo "$PRECOMMIT_REPORT" | jq '.' > "$PRECOMMIT_REPORT_FILE"
+    cp "$PRECOMMIT_REPORT_FILE" "$PRECOMMIT_LATEST"
+
+    echo -e "${BLUE}══════════════════════════════════════════════════════════════${NC}"
+    echo -e "${BLUE}🤖 LLM NEXT STEP - Call pending-violations to get fix instructions:${NC}"
+    echo -e "${BLUE}══════════════════════════════════════════════════════════════${NC}"
+    echo -e ""
+    echo -e "   ${GREEN}MCP Tool:${NC}  projexlight_get_pending_violations"
+    echo -e "   ${GREEN}curl:${NC}      curl http://localhost:8766/api/instruction/pending-violations"
+    echo -e ""
+    echo -e "   ${YELLOW}The response includes:${NC}"
+    echo -e "   - violations[] with fix instructions for each"
+    echo -e "   - fixPrompt with step-by-step guidance"
+    echo -e ""
+    echo -e "   ${YELLOW}After fixing:${NC}"
+    echo -e "   1. Fix each violation in your code"
+    echo -e "   2. git add . && git commit (re-runs pre-commit hook)"
+    echo -e "   3. Call projexlight_clear_violations when all fixed"
+    echo -e "${BLUE}══════════════════════════════════════════════════════════════${NC}"
+    echo -e ""
+
+    exit 1
+fi
+
+# Show warnings (non-blocking)
+if [ "$WARNING_COUNT" -gt 0 ]; then
+    echo -e "\n${YELLOW}⚠️  Component Similarity Warnings (non-blocking):${NC}\n"
+    echo "$SCAN_RESULT" | jq -r '.warnings[] |
+        "  ⚠️  \(.component) (\(.filePath))\n" +
+        "     Similar to: \(.similarTo) (\(.similarity)% match)\n" +
+        "     \(.message)\n"'
+    echo -e "${YELLOW}💡 Review these similarities in the Leadership Dashboard${NC}"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TODO DETECTION - MISSING API/MOCK REMINDERS
+# Scans staged files for TODO comments, especially API-related ones
+# ═══════════════════════════════════════════════════════════════════════════════
+
+echo -e "\n${BLUE}📝 Scanning for TODO comments in staged files...${NC}"
+
+# Define TODO patterns to search for (prioritizing API-related TODOs)
+TODO_PATTERNS=(
+    "TODO.*[Aa][Pp][Ii]"           # TODO related to API
+    "TODO.*[Mm]ock"                 # TODO related to mock
+    "TODO.*[Pp]laceholder"          # TODO related to placeholder
+    "TODO.*[Rr]eplace"              # TODO related to replacement needed
+    "TODO.*[Ww]aiting"              # TODO waiting for something
+    "TODO.*[Mm]issing"              # TODO missing functionality
+    "TODO.*[Nn]ot.*[Ii]mplemented"  # TODO not implemented
+    "FIXME"                         # FIXME comments
+    "XXX"                           # XXX comments
+    "HACK"                          # HACK comments
+)
+
+# Scan staged files for TODOs
+TODO_COUNT=0
+API_TODO_COUNT=0
+declare -a TODO_LIST
+declare -a API_TODO_LIST
+
+for file in $STAGED_FILES; do
+    # Skip non-code files
+    if [[ ! "$file" =~ \.(ts|tsx|js|jsx|py|java|go|rb|php|cs|cpp|c|rs|swift|kt)$ ]]; then
+        continue
+    fi
+
+    # Get staged content of the file
+    if git show ":$file" > /dev/null 2>&1; then
+        CONTENT=$(git show ":$file" 2>/dev/null || echo "")
+
+        if [ -n "$CONTENT" ]; then
+            # Search for TODO patterns with line numbers
+            while IFS= read -r line; do
+                if [ -n "$line" ]; then
+                    LINE_NUM=$(echo "$line" | cut -d: -f1)
+                    LINE_CONTENT=$(echo "$line" | cut -d: -f2-)
+
+                    # Check if it's an API-related TODO
+                    if echo "$LINE_CONTENT" | grep -qiE "(api|mock|placeholder|replace.*api|waiting.*api)"; then
+                        API_TODO_COUNT=$((API_TODO_COUNT + 1))
+                        API_TODO_LIST+=("${file}:${LINE_NUM}: ${LINE_CONTENT}")
+                    else
+                        TODO_COUNT=$((TODO_COUNT + 1))
+                        TODO_LIST+=("${file}:${LINE_NUM}: ${LINE_CONTENT}")
+                    fi
+                fi
+            done < <(echo "$CONTENT" | grep -n -E "(TODO|FIXME|XXX|HACK)" 2>/dev/null || echo "")
+        fi
+    fi
+done
+
+TOTAL_TODOS=$((TODO_COUNT + API_TODO_COUNT))
+
+if [ "$TOTAL_TODOS" -gt 0 ]; then
+    echo -e "\n${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${YELLOW}⚠️  Found ${TOTAL_TODOS} TODO comment(s) in staged files${NC}"
+    echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+
+    # Show API-related TODOs first (higher priority)
+    if [ "$API_TODO_COUNT" -gt 0 ]; then
+        echo -e "\n${RED}🔴 API/Mock TODOs (${API_TODO_COUNT}) - High Priority:${NC}"
+        echo -e "${RED}   These indicate missing API integrations or temporary mocks:${NC}\n"
+        for todo in "${API_TODO_LIST[@]}"; do
+            echo -e "   ${RED}•${NC} $todo"
+        done
+        echo ""
+        echo -e "${YELLOW}   💡 These TODOs suggest APIs that need to be implemented or integrated.${NC}"
+        echo -e "${YELLOW}   Consider:"
+        echo -e "      - Checking if the required API is now available: projexlight_search_apis"
+        echo -e "      - Implementing the missing API before this commit"
+        echo -e "      - Coordinating with the developer working on the API${NC}"
+    fi
+
+    # Show other TODOs
+    if [ "$TODO_COUNT" -gt 0 ]; then
+        echo -e "\n${YELLOW}🟡 Other TODOs (${TODO_COUNT}):${NC}\n"
+        # Show first 10 TODOs
+        count=0
+        for todo in "${TODO_LIST[@]}"; do
+            if [ $count -lt 10 ]; then
+                echo -e "   ${YELLOW}•${NC} $todo"
+                count=$((count + 1))
+            fi
+        done
+        if [ "$TODO_COUNT" -gt 10 ]; then
+            echo -e "   ... and $((TODO_COUNT - 10)) more"
+        fi
+    fi
+
+    echo ""
+
+    # ═══════════════════════════════════════════════════════════════════════════════
+    # SAVE TODO REPORT (for end-of-sprint cleanup)
+    # ═══════════════════════════════════════════════════════════════════════════════
+    HAS_TODOS=true
+
+    # Build TODO items JSON array
+    TODO_ITEMS_JSON="["
+    first=true
+    for todo in "${API_TODO_LIST[@]}"; do
+        file=$(echo "$todo" | cut -d: -f1)
+        line=$(echo "$todo" | cut -d: -f2)
+        content=$(echo "$todo" | cut -d: -f3-)
+        if [ "$first" = true ]; then
+            first=false
+        else
+            TODO_ITEMS_JSON+=","
+        fi
+        TODO_ITEMS_JSON+="{\"file\":\"$file\",\"line\":$line,\"content\":\"$(echo "$content" | sed 's/"/\\"/g')\",\"priority\":\"high\",\"category\":\"api\"}"
+    done
+    for todo in "${TODO_LIST[@]}"; do
+        file=$(echo "$todo" | cut -d: -f1)
+        line=$(echo "$todo" | cut -d: -f2)
+        content=$(echo "$todo" | cut -d: -f3-)
+        if [ "$first" = true ]; then
+            first=false
+        else
+            TODO_ITEMS_JSON+=","
+        fi
+        TODO_ITEMS_JSON+="{\"file\":\"$file\",\"line\":$line,\"content\":\"$(echo "$content" | sed 's/"/\\"/g')\",\"priority\":\"normal\",\"category\":\"general\"}"
+    done
+    TODO_ITEMS_JSON+="]"
+
+    # Create TODO report
+    TODO_REPORT=$(cat <<EOF
+{
+  "reportType": "todos",
+  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "status": "pending",
+  "priority": "end-of-sprint",
+  "summary": {
+    "total": ${TOTAL_TODOS},
+    "api_related": ${API_TODO_COUNT},
+    "general": ${TODO_COUNT}
+  },
+  "items": ${TODO_ITEMS_JSON},
+  "llm_prompt": "The following TODO items were found in the codebase. These should be addressed before the end of the sprint:\n\n## High Priority - API/Mock TODOs (${API_TODO_COUNT})\nThese indicate missing API integrations or temporary mocks:\n\n$(for todo in "${API_TODO_LIST[@]}"; do echo "- $todo"; done | sed 's/"/\\"/g')\n\n## Normal Priority - General TODOs (${TODO_COUNT})\n\n$(for todo in "${TODO_LIST[@]}"; do echo "- $todo"; done | head -10 | sed 's/"/\\"/g')\n\n## Actions\n1. For API TODOs: Check if the required API is now available using \`projexlight_search_apis\`\n2. Replace mocks with actual API calls\n3. Address remaining TODOs before sprint completion"
+}
+EOF
+)
+    echo "$TODO_REPORT" | jq '.' > "$TODOS_REPORT_FILE" 2>/dev/null || echo "$TODO_REPORT" > "$TODOS_REPORT_FILE"
+    cp "$TODOS_REPORT_FILE" "$TODOS_LATEST"
+
+    echo -e "\n${BLUE}📄 TODO report saved to:${NC}"
+    echo -e "   ${TODOS_LATEST}"
+    echo -e "${YELLOW}💡 Address these before end of sprint:${NC}"
+    echo -e "   \"Please read ${TODOS_LATEST} and fix the TODOs\""
+
+    # If there are API-related TODOs, ask user to confirm
+    if [ "$API_TODO_COUNT" -gt 0 ]; then
+        if [ -t 0 ]; then
+            echo -e "\n${YELLOW}You have ${API_TODO_COUNT} API-related TODO(s). Continue with commit? [Y/n]${NC}"
+            read -r -n 1 response </dev/tty
+            echo ""
+
+            case "$response" in
+                [nN])
+                    echo -e "${RED}❌ Commit cancelled. Please address the API TODOs first.${NC}"
+                    exit 1
+                    ;;
+                *)
+                    echo -e "${GREEN}✓ Proceeding with commit despite API TODOs${NC}"
+                    ;;
+            esac
+        else
+            # Non-interactive mode - just warn
+            echo -e "${YELLOW}⚠️  Non-interactive mode: Proceeding with ${API_TODO_COUNT} API TODO(s)${NC}"
+        fi
+    fi
+else
+    echo -e "${GREEN}✓ No TODO comments found in staged files${NC}"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TASK PROGRESS AUTO-UPDATE
+# Parse commit message and update task completion status if not already updated
+# Updates both tasks-completed.json (main tracker) and task-N.json (individual task file)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+echo -e "\n${BLUE}📊 Checking task progress update...${NC}"
+
+# Get the commit message from .git/COMMIT_EDITMSG if it exists
+COMMIT_MSG_FILE=".git/COMMIT_EDITMSG"
+if [ -f "$COMMIT_MSG_FILE" ]; then
+    COMMIT_MSG=$(cat "$COMMIT_MSG_FILE")
+else
+    # Try to get from command line (for --message commits)
+    COMMIT_MSG=""
+fi
+
+# Parse commit message for task references
+# Expected format: "Complete task-N sub-task M: ..." or "task-N sub-task M"
+TASK_PATTERN="task-([0-9]+)"
+SUBTASK_PATTERN="sub-task[[:space:]]*([0-9]+)"
+
+if [[ $COMMIT_MSG =~ $TASK_PATTERN ]]; then
+    TASK_NUM="${BASH_REMATCH[1]}"
+    echo -e "   ${GREEN}Found task reference: task-${TASK_NUM}${NC}"
+
+    if [[ $COMMIT_MSG =~ $SUBTASK_PATTERN ]]; then
+        SUBTASK_NUM="${BASH_REMATCH[1]}"
+        echo -e "   ${GREEN}Found sub-task reference: sub-task ${SUBTASK_NUM}${NC}"
+
+        # Find the config directory and progress files
+        CONFIG_DIR=""
+        PROGRESS_FILE=""
+        TASK_FILE=""
+
+        for config_dir in ".claude" ".goose" ".cursor" ".aider" ".windsurf" ".cline" ".gemini" ".projexlight"; do
+            if [ -f "${config_dir}/progress/tasks-completed.json" ]; then
+                CONFIG_DIR="${config_dir}"
+                PROGRESS_FILE="${config_dir}/progress/tasks-completed.json"
+                TASK_FILE="${config_dir}/progress/major-tasks/task-${TASK_NUM}.json"
+                break
+            fi
+        done
+
+        if [ -n "$PROGRESS_FILE" ] && [ -f "$PROGRESS_FILE" ]; then
+            echo -e "   ${BLUE}Config directory: ${CONFIG_DIR}${NC}"
+            echo -e "   ${BLUE}Progress file: ${PROGRESS_FILE}${NC}"
+            echo -e "   ${BLUE}Task file: ${TASK_FILE}${NC}"
+
+            # ═══════════════════════════════════════════════════════════════════
+            # Read current state from tasks-completed.json
+            # ═══════════════════════════════════════════════════════════════════
+            CURRENT_MAJOR_INDEX=$(jq -r '.current_major_task_index // 0' "$PROGRESS_FILE" 2>/dev/null || echo "0")
+            CURRENT_SUB_INDEX=$(jq -r '.current_sub_task_index // 0' "$PROGRESS_FILE" 2>/dev/null || echo "0")
+            TOTAL_SUB_TASKS=$(jq -r '.current_task_summary.total_sub_tasks // 0' "$PROGRESS_FILE" 2>/dev/null || echo "0")
+
+            echo -e "   ${BLUE}Current state: Major task ${CURRENT_MAJOR_INDEX}, Sub-task ${CURRENT_SUB_INDEX}/${TOTAL_SUB_TASKS}${NC}"
+
+            # Check if this commit is for the current major task
+            if [ "$TASK_NUM" -eq "$CURRENT_MAJOR_INDEX" ]; then
+                # Check if update is needed (sub-task index should be incremented)
+                if [ "$CURRENT_SUB_INDEX" -lt "$SUBTASK_NUM" ]; then
+                    echo -e "   ${YELLOW}⚠️  Progress not updated by LLM - auto-updating...${NC}"
+                    echo -e "   ${YELLOW}   current_sub_task_index: ${CURRENT_SUB_INDEX} → ${SUBTASK_NUM}${NC}"
+
+                    # ═══════════════════════════════════════════════════════════════════
+                    # Update tasks-completed.json (main tracker)
+                    # ═══════════════════════════════════════════════════════════════════
+                    TEMP_FILE=$(mktemp)
+                    jq --argjson subIdx "$SUBTASK_NUM" \
+                       --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                       '.current_sub_task_index = $subIdx |
+                        .current_task_summary.completed_sub_tasks = $subIdx |
+                        .current_task_summary.pending_sub_tasks = (.current_task_summary.total_sub_tasks - $subIdx) |
+                        .last_updated = $timestamp' \
+                       "$PROGRESS_FILE" > "$TEMP_FILE" && mv "$TEMP_FILE" "$PROGRESS_FILE"
+
+                    if [ $? -eq 0 ]; then
+                        echo -e "   ${GREEN}✅ tasks-completed.json updated${NC}"
+                        git add "$PROGRESS_FILE"
+                    else
+                        echo -e "   ${RED}❌ Failed to update tasks-completed.json${NC}"
+                    fi
+
+                    # ═══════════════════════════════════════════════════════════════════
+                    # Update task-N.json (individual task file)
+                    # ═══════════════════════════════════════════════════════════════════
+                    if [ -f "$TASK_FILE" ]; then
+                        TASK_TEMP=$(mktemp)
+
+                        # Read total sub-tasks from task file
+                        TASK_TOTAL_SUBS=$(jq -r '.total_sub_tasks // 0' "$TASK_FILE" 2>/dev/null || echo "0")
+
+                        # Calculate new pending count
+                        NEW_PENDING=$((TASK_TOTAL_SUBS - SUBTASK_NUM))
+                        if [ "$NEW_PENDING" -lt 0 ]; then
+                            NEW_PENDING=0
+                        fi
+
+                        # Determine status based on completion
+                        if [ "$SUBTASK_NUM" -ge "$TASK_TOTAL_SUBS" ]; then
+                            NEW_STATUS="completed"
+                            COMPLETED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+                        else
+                            NEW_STATUS="in_progress"
+                            COMPLETED_AT="null"
+                        fi
+
+                        # Update task file
+                        jq --argjson subIdx "$SUBTASK_NUM" \
+                           --argjson pending "$NEW_PENDING" \
+                           --arg status "$NEW_STATUS" \
+                           --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                           '.current_sub_task_index = ($subIdx + 1) |
+                            .completed_sub_tasks = $subIdx |
+                            .pending_sub_tasks = $pending |
+                            .in_progress_sub_tasks = (if $status == "completed" then 0 else 1 end) |
+                            .status = $status |
+                            .started_at = (if .started_at == null then $timestamp else .started_at end)' \
+                           "$TASK_FILE" > "$TASK_TEMP" && mv "$TASK_TEMP" "$TASK_FILE"
+
+                        if [ $? -eq 0 ]; then
+                            echo -e "   ${GREEN}✅ task-${TASK_NUM}.json updated (status: ${NEW_STATUS})${NC}"
+                            git add "$TASK_FILE"
+                        else
+                            echo -e "   ${RED}❌ Failed to update task-${TASK_NUM}.json${NC}"
+                        fi
+
+                        # ═══════════════════════════════════════════════════════════════════
+                        # Update sub-task status within task file
+                        # ═══════════════════════════════════════════════════════════════════
+                        # Mark the completed sub-task as "completed"
+                        SUB_TEMP=$(mktemp)
+                        jq --argjson subNum "$SUBTASK_NUM" \
+                           --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                           '(.sub_tasks[] | select(.sequence_number == $subNum)) |= . + {
+                              "status": "completed",
+                              "completed_at": $timestamp
+                            }' \
+                           "$TASK_FILE" > "$SUB_TEMP" && mv "$SUB_TEMP" "$TASK_FILE"
+
+                        if [ $? -eq 0 ]; then
+                            echo -e "   ${GREEN}✅ Sub-task ${SUBTASK_NUM} marked as completed${NC}"
+                            git add "$TASK_FILE"
+                        fi
+
+                        # ═══════════════════════════════════════════════════════════════════
+                        # Update completion-status.json (epic/feature level tracking)
+                        # ═══════════════════════════════════════════════════════════════════
+                        COMPLETION_STATUS_FILE="${CONFIG_DIR}/progress/completion-status.json"
+                        if [ -f "$COMPLETION_STATUS_FILE" ]; then
+                            echo -e "   ${BLUE}📊 Updating completion-status.json...${NC}"
+
+                            # Get epic_id and feature_id from the current task in tasks-completed.json
+                            CURRENT_TASK_DATA=$(jq -r ".all_tasks[$CURRENT_MAJOR_INDEX] // {}" "$PROGRESS_FILE" 2>/dev/null || echo "{}")
+                            EPIC_ID=$(echo "$CURRENT_TASK_DATA" | jq -r '.epic_id // null')
+                            FEATURE_ID=$(echo "$CURRENT_TASK_DATA" | jq -r '.feature_id // null')
+
+                            if [ "$EPIC_ID" != "null" ] && [ -n "$EPIC_ID" ]; then
+                                # Update epic completion
+                                EPIC_TEMP=$(mktemp)
+                                jq --arg epicId "$EPIC_ID" \
+                                   --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                                   '(.epics_completion[] | select(.epic_id == $epicId)) |= . + {
+                                      tasks_completed: (.tasks_completed + 1),
+                                      completion_percentage: (((.tasks_completed + 1) / .tasks_total * 100) | floor)
+                                    } |
+                                    .last_updated = $timestamp' \
+                                   "$COMPLETION_STATUS_FILE" > "$EPIC_TEMP" && mv "$EPIC_TEMP" "$COMPLETION_STATUS_FILE"
+
+                                if [ $? -eq 0 ]; then
+                                    echo -e "   ${GREEN}✅ Updated epic completion for: ${EPIC_ID}${NC}"
+                                    git add "$COMPLETION_STATUS_FILE"
+                                fi
+                            fi
+
+                            if [ "$FEATURE_ID" != "null" ] && [ -n "$FEATURE_ID" ]; then
+                                # Update feature completion
+                                FEATURE_TEMP=$(mktemp)
+                                jq --arg featureId "$FEATURE_ID" \
+                                   --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                                   '(.features_completion[] | select(.feature_id == $featureId)) |= . + {
+                                      tasks_completed: (.tasks_completed + 1),
+                                      completion_percentage: (((.tasks_completed + 1) / .tasks_total * 100) | floor)
+                                    } |
+                                    .last_updated = $timestamp' \
+                                   "$COMPLETION_STATUS_FILE" > "$FEATURE_TEMP" && mv "$FEATURE_TEMP" "$COMPLETION_STATUS_FILE"
+
+                                if [ $? -eq 0 ]; then
+                                    echo -e "   ${GREEN}✅ Updated feature completion for: ${FEATURE_ID}${NC}"
+                                    git add "$COMPLETION_STATUS_FILE"
+                                fi
+                            fi
+
+                            # Update overall completion percentage
+                            OVERALL_TEMP=$(mktemp)
+                            jq --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                               '.tasks_by_status.completed = (.tasks_by_status.completed + 1) |
+                                .tasks_by_status.pending = ([.tasks_by_status.pending - 1, 0] | max) |
+                                .overall_completion_percentage = ((.tasks_by_status.completed / (.tasks_by_status.completed + .tasks_by_status.pending + .tasks_by_status.in_progress) * 100) | floor) |
+                                .last_updated = $timestamp' \
+                               "$COMPLETION_STATUS_FILE" > "$OVERALL_TEMP" && mv "$OVERALL_TEMP" "$COMPLETION_STATUS_FILE"
+
+                            if [ $? -eq 0 ]; then
+                                echo -e "   ${GREEN}✅ Updated overall completion percentage${NC}"
+                                git add "$COMPLETION_STATUS_FILE"
+                            fi
+                        fi
+
+                        # ═══════════════════════════════════════════════════════════════════
+                        # Check if all sub-tasks complete - move to next major task
+                        # ═══════════════════════════════════════════════════════════════════
+                        if [ "$NEW_STATUS" == "completed" ]; then
+                            echo -e "   ${GREEN}🎉 All sub-tasks complete for task-${TASK_NUM}!${NC}"
+
+                            # Update tasks-completed.json to move to next major task
+                            NEXT_MAJOR=$((TASK_NUM + 1))
+                            TOTAL_MAJOR=$(jq -r '.total_tasks // 0' "$PROGRESS_FILE" 2>/dev/null || echo "0")
+
+                            if [ "$NEXT_MAJOR" -lt "$TOTAL_MAJOR" ]; then
+                                echo -e "   ${BLUE}Moving to next major task: task-${NEXT_MAJOR}${NC}"
+
+                                NEXT_TASK_FILE="${CONFIG_DIR}/progress/major-tasks/task-${NEXT_MAJOR}.json"
+                                if [ -f "$NEXT_TASK_FILE" ]; then
+                                    NEXT_TOTAL_SUBS=$(jq -r '.total_sub_tasks // 0' "$NEXT_TASK_FILE" 2>/dev/null || echo "0")
+                                    NEXT_TITLE=$(jq -r '.title // "Next Task"' "$NEXT_TASK_FILE" 2>/dev/null || echo "Next Task")
+
+                                    # Update main progress file for next task
+                                    MAIN_TEMP=$(mktemp)
+                                    jq --argjson nextMajor "$NEXT_MAJOR" \
+                                       --arg nextFile "task-${NEXT_MAJOR}.json" \
+                                       --arg nextPath "${CONFIG_DIR}/progress/major-tasks/task-${NEXT_MAJOR}.json" \
+                                       --argjson nextTotalSubs "$NEXT_TOTAL_SUBS" \
+                                       --arg nextTitle "$NEXT_TITLE" \
+                                       --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                                       '.current_major_task_index = $nextMajor |
+                                        .current_major_task_file = $nextFile |
+                                        .current_major_task_path = $nextPath |
+                                        .current_sub_task_index = 0 |
+                                        .completed_tasks = (.completed_tasks + 1) |
+                                        .in_progress_tasks = 1 |
+                                        .pending_tasks = (.pending_tasks - 1) |
+                                        .current_task_summary = {
+                                          "title": $nextTitle,
+                                          "total_sub_tasks": $nextTotalSubs,
+                                          "completed_sub_tasks": 0,
+                                          "files_to_generate": []
+                                        } |
+                                        .last_updated = $timestamp' \
+                                       "$PROGRESS_FILE" > "$MAIN_TEMP" && mv "$MAIN_TEMP" "$PROGRESS_FILE"
+
+                                    echo -e "   ${GREEN}✅ Advanced to task-${NEXT_MAJOR}: ${NEXT_TITLE}${NC}"
+                                    git add "$PROGRESS_FILE"
+                                fi
+                            else
+                                echo -e "   ${GREEN}🎉🎉 ALL TASKS COMPLETED! 🎉🎉${NC}"
+
+                                # Mark project as complete
+                                FINAL_TEMP=$(mktemp)
+                                jq --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                                   '.completed_tasks = .total_tasks |
+                                    .in_progress_tasks = 0 |
+                                    .pending_tasks = 0 |
+                                    .project_completed = true |
+                                    .completed_at = $timestamp |
+                                    .last_updated = $timestamp' \
+                                   "$PROGRESS_FILE" > "$FINAL_TEMP" && mv "$FINAL_TEMP" "$PROGRESS_FILE"
+
+                                git add "$PROGRESS_FILE"
+                            fi
+                        fi
+                    else
+                        echo -e "   ${YELLOW}⚠️  Task file not found: ${TASK_FILE}${NC}"
+                    fi
+
+                    echo -e "   ${GREEN}✅ All progress files staged for commit${NC}"
+                else
+                    echo -e "   ${GREEN}✓ Progress already up to date (sub-task index: ${CURRENT_SUB_INDEX})${NC}"
+                fi
+            else
+                echo -e "   ${YELLOW}⚠️  Commit references task-${TASK_NUM} but current task is ${CURRENT_MAJOR_INDEX}${NC}"
+                echo -e "   ${YELLOW}   This may indicate out-of-order task completion${NC}"
+            fi
+        else
+            echo -e "   ${YELLOW}⚠️  No progress file found - skipping auto-update${NC}"
+            echo -e "   ${YELLOW}   Checked: .claude, .goose, .cursor, .aider, .windsurf, .cline, .gemini, .projexlight${NC}"
+        fi
+    else
+        echo -e "   ${YELLOW}⚠️  No sub-task number found in commit message${NC}"
+        echo -e "   ${YELLOW}   Expected format: 'Complete task-N sub-task M: ...'${NC}"
+    fi
+else
+    echo -e "   ${YELLOW}ℹ️  No task reference in commit message - skipping progress update${NC}"
+    echo -e "   ${YELLOW}   Expected format: 'Complete task-N sub-task M: ...'${NC}"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SUCCESS SUMMARY
+# ═══════════════════════════════════════════════════════════════════════════════
+
+echo -e "\n${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "${GREEN}✅ Pre-commit scan passed${NC}"
+echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SCAN SUMMARY - Display all findings
+# ═══════════════════════════════════════════════════════════════════════════════
+echo -e "\n${BLUE}📊 Scan Summary:${NC}"
+echo -e "┌──────────────────────────────────────────────┐"
+echo -e "│  ${BLUE}Files Scanned:${NC}      ${SCANNED_FILES:-0}                      │"
+echo -e "│  ${GREEN}Duplicate APIs:${NC}     ${DUPLICATE_COUNT:-0} (blocking: ${BLOCKING:-false})       │"
+echo -e "│  ${YELLOW}Warnings:${NC}           ${WARNING_COUNT:-0}                      │"
+echo -e "│  ${YELLOW}API TODOs:${NC}          ${API_TODO_COUNT:-0} (high priority)       │"
+echo -e "│  ${YELLOW}Other TODOs:${NC}        ${TODO_COUNT:-0}                         │"
+echo -e "└──────────────────────────────────────────────┘"
+
+# Show detailed issues if any were found (non-blocking)
+if [ "${WARNING_COUNT:-0}" -gt 0 ] || [ "${TOTAL_TODOS:-0}" -gt 0 ]; then
+    echo -e "\n${YELLOW}⚠️  Issues Found (non-blocking):${NC}"
+
+    if [ "${WARNING_COUNT:-0}" -gt 0 ]; then
+        echo -e "   ${YELLOW}• ${WARNING_COUNT} component similarity warning(s)${NC}"
+        echo -e "     Check: .projexlight/reports/pre-commit/ for details"
+    fi
+
+    if [ "${API_TODO_COUNT:-0}" -gt 0 ]; then
+        echo -e "   ${RED}• ${API_TODO_COUNT} API/Mock TODO(s) - may indicate missing APIs${NC}"
+        echo -e "     These should be resolved before sprint end"
+    fi
+
+    if [ "${TODO_COUNT:-0}" -gt 0 ]; then
+        echo -e "   ${YELLOW}• ${TODO_COUNT} general TODO(s)${NC}"
+    fi
+fi
+
+# Show report locations if any were generated
+if [ "$HAS_TODOS" = true ]; then
+    echo -e "\n${BLUE}📋 Reports generated:${NC}"
+    echo -e "   ${YELLOW}TODOs (end-of-sprint):${NC} ${TODOS_LATEST}"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# NEXT STEPS - USER INSTRUCTIONS
+# ═══════════════════════════════════════════════════════════════════════════════
+echo -e "\n${BLUE}📖 Next Steps:${NC}"
+echo -e ""
+echo -e "${YELLOW}1. Review Reports & MCP Logs:${NC}"
+echo -e "   ${BLUE}Reports:${NC}     .projexlight/reports/pre-commit/"
+echo -e "   ${BLUE}TODOs:${NC}       .projexlight/reports/todos/"
+echo -e "   ${BLUE}MCP Logs:${NC}    docker logs projexlight-mcp"
+echo -e "   ${BLUE}Feedback:${NC}    .projexlight/feedback/"
+echo -e ""
+echo -e "${YELLOW}2. If Violations Found, Ask LLM to Fix:${NC}"
+echo -e "   ${GREEN}For pre-commit violations:${NC}"
+echo -e "   \"Read .projexlight/reports/pre-commit/latest.json and fix the violations\""
+echo -e ""
+echo -e "   ${GREEN}For TODO items (end of sprint):${NC}"
+echo -e "   \"Read .projexlight/reports/todos/latest.json and fix the TODO items\""
+echo -e ""
+echo -e "   ${GREEN}For MCP issues, share logs with LLM:${NC}"
+echo -e "   \"Analyze these MCP logs and fix any errors: docker logs projexlight-mcp\""
+echo -e ""
+echo -e "${YELLOW}3. Check MCP Dashboard:${NC}"
+echo -e "   ${BLUE}http://localhost:8766${NC} - API status, test results, code quality"
+echo -e ""
+
+exit 0

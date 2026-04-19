@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "projexlight": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "mcp-server/mcp-bridge.js"
+      ],
+      "env": {
+        "MCP_SERVER_URL": "http://localhost:8766"
+      }
+    }
+  }
+}

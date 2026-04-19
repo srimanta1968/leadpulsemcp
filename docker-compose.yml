@@ -1,0 +1,44 @@
+# LeadPulse MCP application — local-run image.
+#
+# Image: ${DOCKERHUB_USERNAME:-projexlight}/projex-leadpulse-mcp:${IMAGE_TAG:-latest}
+# Built by ./scripts/build-and-push.sh (multi-stage Dockerfile → Nuitka binary).
+#
+# Topology:
+#   * Mongo runs as a SEPARATE shared server. See docker-compose.shared-mongo.yml.
+#   * Each MCP container boots unconfigured; LeadPulse CRM calls
+#     POST /api/v1/bootstrap to inject mongodb_url + leadpulse_url + token.
+#   * In production: one shared Mongo + N MCP containers on ECS Fargate.
+#
+# For local dev you typically run uvicorn directly (faster reload). See
+# scripts/test-local.sh. This compose file is here for parity with the prod
+# image — use it if you want to test the compiled binary locally.
+
+services:
+  projex-leadpulse-mcp:
+    image: ${DOCKERHUB_USERNAME:-projexlight}/projex-leadpulse-mcp:${IMAGE_TAG:-latest}
+    container_name: projex_leadpulse_mcp_dev
+    ports:
+      - "${MCP_HOST_PORT:-8000}:8000"
+    environment:
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=8000
+      - BOOTSTRAP_SECRET=${BOOTSTRAP_SECRET:-dev-secret}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - MEM_LIMIT_MB=${MEM_LIMIT_MB:-1024}
+    networks:
+      - leadpulse_shared
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+# Join the shared Mongo network defined in docker-compose.shared-mongo.yml so
+# the MCP can reach the DB container at host `mongodb` on the internal network.
+networks:
+  leadpulse_shared:
+    external: true
+    name: leadpulse_shared

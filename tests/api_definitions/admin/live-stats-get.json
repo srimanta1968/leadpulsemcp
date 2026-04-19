@@ -1,0 +1,12 @@
+{
+  "name": "GET /api/v1/admin/live-stats/:campaign_id - CRM live queue snapshot",
+  "endpoint": "/api/v1/admin/live-stats/:campaign_id",
+  "method": "GET",
+  "requiresAuth": false,
+  "expectedStatus": 200,
+  "taskId": "cf6027ae-08dd-42b2-a37e-95c4404d41c1",
+  "sprintId": "7f503ef9-3bf1-4ce9-b055-9f4824e676a1",
+  "priority": 85,
+  "testability": "manual",
+  "skipReason": "HMAC-verified live counters. Reachable only from the CRM, which signs the request."
+}

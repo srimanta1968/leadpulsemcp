@@ -1,0 +1,20 @@
+{
+  "cliTool": "claude",
+  "exportMode": "new_repository",
+  "exportScope": "full_sprint",
+  "selectedPurposes": [
+    "api_development",
+    "unit_tests",
+    "db_schema_design"
+  ],
+  "folderMapping": {
+    "models": "server/src/models",
+    "services": "server/src/services",
+    "routes": "server/src/routes",
+    "controllers": "server/src/controllers",
+    "components": "client/src/components",
+    "pages": "client/src/pages",
+    "tests": "tests",
+    "infrastructure": "infrastructure"
+  }
+}
