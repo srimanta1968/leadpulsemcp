@@ -141,10 +141,23 @@ async def _process_one(doc: dict[str, Any], active_campaigns: dict[str, dict[str
         return
 
     # Daily cap
-    daily_cap = int(campaign_summary.get("daily_send_cap", 0) or 0)
+    cfg = campaign_summary.get("config") or campaign_summary
+    daily_cap = int(cfg.get("daily_send_cap", 0) or campaign_summary.get("daily_send_cap", 0) or 0)
     if daily_cap and not await throttle_service.try_consume_daily_cap(db, campaign_id, tenant_user_id, daily_cap):
         # Return to pending so it's reconsidered tomorrow.
         await sqs.mark_status(db, doc["_id"], "pending", last_error="daily_cap_reached")
+        return
+
+    # Hourly cap (plan-tier throttle_per_hour from campaign config_snapshot)
+    per_hour_cap = int(cfg.get("throttle_per_hour", 0) or campaign_summary.get("throttle_per_hour", 0) or 0)
+    if per_hour_cap and not await throttle_service.try_consume_hourly_cap(
+        db, campaign_id, tenant_user_id, per_hour_cap
+    ):
+        if daily_cap:
+            await throttle_service.release_daily_cap(db, campaign_id, tenant_user_id)
+        if per_hour_cap:
+            await throttle_service.release_hourly_cap(db, campaign_id, tenant_user_id)
+        await sqs.mark_status(db, doc["_id"], "pending", last_error="hour_cap_reached")
         return
 
     # Provider rate limit
@@ -156,6 +169,8 @@ async def _process_one(doc: dict[str, Any], active_campaigns: dict[str, dict[str
     ):
         if daily_cap:
             await throttle_service.release_daily_cap(db, campaign_id, tenant_user_id)
+        if per_hour_cap:
+            await throttle_service.release_hourly_cap(db, campaign_id, tenant_user_id)
         await sqs.mark_status(db, doc["_id"], "pending", last_error="provider_rate_limited")
         return
 
@@ -168,6 +183,8 @@ async def _process_one(doc: dict[str, Any], active_campaigns: dict[str, dict[str
         await sqs.mark_status(db, doc["_id"], "failed", last_error=f"resolve_secret: {exc}")
         if daily_cap:
             await throttle_service.release_daily_cap(db, campaign_id, tenant_user_id)
+        if per_hour_cap:
+            await throttle_service.release_hourly_cap(db, campaign_id, tenant_user_id)
         return
 
     # Load contact
@@ -234,6 +251,8 @@ async def _process_one(doc: dict[str, Any], active_campaigns: dict[str, dict[str
         )
         if daily_cap:
             await throttle_service.release_daily_cap(db, campaign_id, tenant_user_id)
+        if per_hour_cap:
+            await throttle_service.release_hourly_cap(db, campaign_id, tenant_user_id)
         try:
             await lpc_mod.leadpulse_client.post_tracker_event(
                 {
@@ -251,6 +270,8 @@ async def _process_one(doc: dict[str, Any], active_campaigns: dict[str, dict[str
         metric_counter("mcp.sender.emails_failed_total", 1, {"provider": result.provider})
         if daily_cap:
             await throttle_service.release_daily_cap(db, campaign_id, tenant_user_id)
+        if per_hour_cap:
+            await throttle_service.release_hourly_cap(db, campaign_id, tenant_user_id)
         log.warning("send_failed", extra={**log_extra, "extra_payload": {"err": result.error}})
 
     # Completion detection

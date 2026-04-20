@@ -15,6 +15,72 @@ def _today_utc() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
+def _current_hour_utc() -> int:
+    return datetime.now(timezone.utc).hour
+
+
+async def try_consume_hourly_cap(
+    db: AsyncIOMotorDatabase,
+    campaign_id: str,
+    tenant_user_id: str,
+    per_hour_cap: int,
+) -> bool:
+    """Atomically increment campaign_hourly_stats.sends for the current UTC
+    hour iff below the per-hour cap.
+
+    Uses a separate collection (campaign_hourly_stats) keyed by
+    (campaign_id, date, hour_utc) so the daily-rollup schema stays unchanged.
+    """
+    if per_hour_cap <= 0:
+        return True
+    today = _today_utc()
+    hour = _current_hour_utc()
+    doc = await db.campaign_hourly_stats.find_one_and_update(
+        {
+            "campaign_id": campaign_id,
+            "date": today,
+            "hour_utc": hour,
+            "sends": {"$lt": per_hour_cap},
+        },
+        {
+            "$inc": {"sends": 1},
+            "$set": {"last_updated_at": datetime.now(timezone.utc)},
+            "$setOnInsert": {
+                "campaign_id": campaign_id,
+                "tenant_user_id": tenant_user_id,
+                "date": today,
+                "hour_utc": hour,
+            },
+        },
+        upsert=True,
+        return_document=False,
+    )
+    if doc is None:
+        fresh = await db.campaign_hourly_stats.find_one(
+            {"campaign_id": campaign_id, "date": today, "hour_utc": hour},
+            {"sends": 1},
+        )
+        return bool(fresh and fresh.get("sends", 0) <= per_hour_cap)
+    return True
+
+
+async def release_hourly_cap(
+    db: AsyncIOMotorDatabase, campaign_id: str, tenant_user_id: str
+) -> None:
+    today = _today_utc()
+    hour = _current_hour_utc()
+    await db.campaign_hourly_stats.update_one(
+        {
+            "campaign_id": campaign_id,
+            "tenant_user_id": tenant_user_id,
+            "date": today,
+            "hour_utc": hour,
+            "sends": {"$gt": 0},
+        },
+        {"$inc": {"sends": -1}},
+    )
+
+
 async def try_consume_daily_cap(
     db: AsyncIOMotorDatabase, campaign_id: str, tenant_user_id: str, daily_cap: int
 ) -> bool:

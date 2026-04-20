@@ -77,6 +77,17 @@ async def _ensure_indexes(db: AsyncIOMotorDatabase) -> None:
         [("tenant_user_id", 1), ("date", 1)], name="tenant_day_rollup"
     )
 
+    # campaign_hourly_stats (per-hour throttle bucket)
+    await db.campaign_hourly_stats.create_index(
+        [("campaign_id", 1), ("date", 1), ("hour_utc", 1)],
+        unique=True,
+        name="uniq_campaign_hour",
+    )
+    await db.campaign_hourly_stats.create_index(
+        [("tenant_user_id", 1), ("date", 1), ("hour_utc", 1)],
+        name="tenant_hour_rollup",
+    )
+
     # mcp_instance_registry: TTL so dead containers disappear after 10 minutes of no heartbeat
     await db.mcp_instance_registry.create_index(
         "last_heartbeat_at", expireAfterSeconds=600, name="ttl_heartbeat"
