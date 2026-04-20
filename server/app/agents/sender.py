@@ -21,6 +21,7 @@ from app.db.mongodb import get_db
 from app.services import (
     email_sender,
     leadpulse_client as lpc_mod,
+    pending_crm_events,
     refined_contacts_service as rcs,
     send_queue_service as sqs,
     template_renderer,
@@ -33,6 +34,7 @@ _POLL_INTERVAL_SECONDS = 15
 _SWEEP_INTERVAL_SECONDS = 30
 _ACTIVE_CAMPAIGNS_REFRESH_SECONDS = 60
 _BATCH_SIZE = 8
+_BACKPRESSURE_PAUSE_SECONDS = 60
 
 
 async def run(agent_uid: str, is_sweeper: bool = False) -> None:
@@ -64,6 +66,19 @@ async def run(agent_uid: str, is_sweeper: bool = False) -> None:
         if not active_campaigns_cache:
             await asyncio.sleep(_POLL_INTERVAL_SECONDS)
             continue
+
+        # Backpressure: when pending_crm_events is > 80% full, stop
+        # leasing new sends for 60s so the replay worker can catch up.
+        try:
+            if await pending_crm_events.is_under_backpressure(get_db()):
+                log.warning(
+                    "sender_paused_crm_events_backpressure",
+                    extra={"extra_payload": {"pause_s": _BACKPRESSURE_PAUSE_SECONDS}},
+                )
+                await asyncio.sleep(_BACKPRESSURE_PAUSE_SECONDS)
+                continue
+        except Exception:  # noqa: BLE001
+            log.exception("backpressure_probe_failed")
 
         try:
             batch = await sqs.lease_batch(
@@ -124,8 +139,20 @@ async def _process_one(doc: dict[str, Any], active_campaigns: dict[str, dict[str
     tenant_user_id = doc["tenant_user_id"]
 
     campaign_summary = active_campaigns.get(campaign_id) or {}
-    if campaign_summary.get("paused"):
-        await sqs.mark_status(db, doc["_id"], "pending", last_error="paused")
+    # Pre-send campaign-status sync-check: the active_campaigns cache
+    # refreshes every 60s — if a campaign was paused/completed in between,
+    # skip this send immediately rather than consume a slot. Belt-and-
+    # braces next to the `paused` boolean because CRM may flip the status
+    # enum (running -> paused/completed) without toggling the legacy
+    # `paused` field.
+    status = str(campaign_summary.get("status") or "").lower()
+    if campaign_summary.get("paused") or status in ("paused", "completed", "cancelled"):
+        await sqs.mark_status(
+            db, doc["_id"], "pending", last_error=f"campaign_{status or 'paused'}"
+        )
+        return
+    if status and status != "running":
+        await sqs.mark_status(db, doc["_id"], "pending", last_error=f"campaign_{status}")
         return
 
     # Campaign send-window gate — defer if outside [send_window_start, send_window_end]

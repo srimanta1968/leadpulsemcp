@@ -15,6 +15,24 @@ from app.core.logging import get_logger
 
 log = get_logger(__name__)
 
+# pending_crm_events is a capped collection (see db/mongodb.py — max 5M docs).
+# When it climbs above this fraction of capacity, the sender agent pauses new
+# leases to let the replay worker catch up, preventing cascading failure when
+# the CRM is down/slow. Phase 1 change #7 in docs/3phase_implementation.md.
+_BACKPRESSURE_FILL_FRACTION = 0.8
+_CAPPED_MAX = 5_000_000
+_BACKPRESSURE_THRESHOLD = int(_CAPPED_MAX * _BACKPRESSURE_FILL_FRACTION)
+
+
+async def is_under_backpressure(db: AsyncIOMotorDatabase) -> bool:
+    """True when the pending_crm_events capped collection is > 80% full.
+
+    Callers (sender loop) should pause new send_queue leases until this
+    flips back to False on the next tick.
+    """
+    count = await db.pending_crm_events.estimated_document_count()
+    return count >= _BACKPRESSURE_THRESHOLD
+
 
 async def buffer_event(
     db: AsyncIOMotorDatabase, endpoint: str, payload: dict[str, Any]

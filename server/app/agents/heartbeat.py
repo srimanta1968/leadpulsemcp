@@ -124,6 +124,7 @@ async def _send_heartbeat(status_override: str | None = None) -> None:
     ]
 
     campaigns_in_flight = await _current_campaigns(db)
+    tenant_backlog = await _per_tenant_backlog(db)
 
     payload = {
         "instance_id": cfg.instance_id,
@@ -138,6 +139,7 @@ async def _send_heartbeat(status_override: str | None = None) -> None:
         "event_loop_lag_ms": snap.event_loop_lag_ms,
         "mongo_lag_ms": snap.mongo_latency_ms,
         "campaigns_in_flight": campaigns_in_flight,
+        "tenant_backlog": tenant_backlog,
         "health_messages": snap.messages,
         "uptime_seconds": _uptime_seconds(),
     }
@@ -177,6 +179,28 @@ async def _current_campaigns(db) -> list[str]:
     ]
     cursor = db.send_queue.aggregate(pipeline)
     return [doc["_id"] async for doc in cursor]
+
+
+async def _per_tenant_backlog(db) -> list[dict[str, Any]]:
+    """Pending send_queue count grouped by tenant_user_id.
+
+    Used by the CRM Fleet Dashboard to see which tenants are driving
+    load right now. Capped at 50 rows — a single container serving a
+    larger set of active tenants than that is a signal to scale the
+    fleet, not a reason to inflate the heartbeat body.
+    """
+    pipeline = [
+        {"$match": {"status": "pending"}},
+        {"$group": {"_id": "$tenant_user_id", "pending": {"$sum": 1}}},
+        {"$sort": {"pending": -1}},
+        {"$limit": 50},
+    ]
+    out: list[dict[str, Any]] = []
+    async for doc in db.send_queue.aggregate(pipeline):
+        if not doc.get("_id"):
+            continue
+        out.append({"tenant_user_id": doc["_id"], "pending": doc["pending"]})
+    return out
 
 
 def install_sigterm_handler(stop_event: asyncio.Event) -> None:
