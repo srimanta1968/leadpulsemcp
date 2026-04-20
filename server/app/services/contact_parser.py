@@ -77,18 +77,39 @@ def parse_csv(stream: io.IOBase) -> Iterator[dict[str, object]]:
 
 
 def parse_json(stream: io.IOBase) -> Iterator[dict[str, object]]:
-    payload = json.loads(stream.read().decode("utf-8"))
-    rows: Iterable[dict[str, str]]
-    if isinstance(payload, list):
-        rows = payload
-    elif isinstance(payload, dict) and isinstance(payload.get("contacts"), list):
-        rows = payload["contacts"]
+    """Stream-parse a JSON contact file item-by-item using ijson.
+
+    Supports two shapes:
+      - top-level array: [ {...}, {...}, ... ]          -> items at "item"
+      - envelope object: { "contacts": [ {...}, ... ] } -> items at "contacts.item"
+
+    A 500 MB file never materializes in memory — only one row at a time.
+    Phase 1 change #6 in docs/3phase_implementation.md.
+    """
+    import ijson  # lazy import: only this parser path needs it
+
+    # Detect shape from the first non-whitespace byte without consuming
+    # more than one char — `ijson` handles everything after this probe.
+    head = stream.read(1)
+    # Put it back at the front for ijson to re-read.
+    remainder = stream.read()
+    combined = io.BytesIO(head + remainder)
+
+    if head == b"[":
+        prefix = "item"
+    elif head == b"{":
+        prefix = "contacts.item"
     else:
+        # Unknown shape; stay safe and yield nothing rather than OOM on a
+        # full json.loads() of an arbitrary blob.
         return
-    for raw in rows:
+
+    for raw in ijson.items(combined, prefix):
         if not isinstance(raw, dict):
             continue
-        normalized = _normalize_row({k: ("" if v is None else str(v)) for k, v in raw.items()})
+        normalized = _normalize_row(
+            {k: ("" if v is None else str(v)) for k, v in raw.items()}
+        )
         if normalized is not None:
             yield normalized
 

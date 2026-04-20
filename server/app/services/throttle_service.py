@@ -21,6 +21,53 @@ def _current_hour_utc() -> int:
     return datetime.now(timezone.utc).hour
 
 
+async def try_consume_tenant_daily_cap(
+    db: AsyncIOMotorDatabase, tenant_user_id: str, daily_cap: int
+) -> bool:
+    """Atomically increment ``tenant_stats_daily.sends`` for today iff below
+    the plan-tier cap. Separate from the per-campaign cap so a tenant
+    running multiple campaigns sees one shared budget.
+
+    Returns True when a slot was consumed or ``daily_cap<=0`` (no-op).
+    The plan-tier cap itself arrives from the CRM's
+    ``GET /api/mcp/tenant-quotas`` endpoint (still CRM backlog TK-2655);
+    until that ships, callers pass 0 and this is a no-op.
+    """
+    if daily_cap <= 0:
+        return True
+    today = _today_utc()
+    doc = await db.tenant_stats_daily.find_one_and_update(
+        {"tenant_user_id": tenant_user_id, "date": today, "sends": {"$lt": daily_cap}},
+        {
+            "$inc": {"sends": 1},
+            "$set": {"last_updated_at": datetime.now(timezone.utc)},
+            "$setOnInsert": {
+                "tenant_user_id": tenant_user_id,
+                "shard_key": tenant_shard_key(tenant_user_id),
+                "date": today,
+            },
+        },
+        upsert=True,
+        return_document=False,
+    )
+    if doc is None:
+        fresh = await db.tenant_stats_daily.find_one(
+            {"tenant_user_id": tenant_user_id, "date": today}, {"sends": 1}
+        )
+        return bool(fresh and fresh.get("sends", 0) <= daily_cap)
+    return True
+
+
+async def release_tenant_daily_cap(
+    db: AsyncIOMotorDatabase, tenant_user_id: str
+) -> None:
+    today = _today_utc()
+    await db.tenant_stats_daily.update_one(
+        {"tenant_user_id": tenant_user_id, "date": today, "sends": {"$gt": 0}},
+        {"$inc": {"sends": -1}},
+    )
+
+
 async def try_consume_hourly_cap(
     db: AsyncIOMotorDatabase,
     campaign_id: str,

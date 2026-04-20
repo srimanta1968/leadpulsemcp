@@ -122,6 +122,12 @@ async def _ensure_indexes(db: AsyncIOMotorDatabase) -> None:
     # in the fleet; no pool_id field.
     await db.tenant_cursors.create_index("_id", name="by_id")
 
+    # tenant_stats_daily — plan-tier per-tenant cap, separate from the
+    # per-campaign daily cap in campaign_stats.
+    await db.tenant_stats_daily.create_index(
+        [("tenant_user_id", 1), ("date", 1)], unique=True, name="uniq_tenant_day"
+    )
+
     # Shard-key indexes on multi-tenant collections. Pre-declared now so
     # Phase 2 sharding needs zero backfill.
     await db.send_queue.create_index("shard_key", name="shard_key")
