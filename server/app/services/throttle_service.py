@@ -16,7 +16,7 @@ def _today_utc() -> str:
 
 
 async def try_consume_daily_cap(
-    db: AsyncIOMotorDatabase, campaign_id: str, daily_cap: int
+    db: AsyncIOMotorDatabase, campaign_id: str, tenant_user_id: str, daily_cap: int
 ) -> bool:
     """Atomically increment campaign_stats.sends for today iff below the cap."""
     if daily_cap <= 0:
@@ -27,7 +27,11 @@ async def try_consume_daily_cap(
         {
             "$inc": {"sends": 1},
             "$set": {"last_updated_at": datetime.now(timezone.utc)},
-            "$setOnInsert": {"campaign_id": campaign_id, "date": today},
+            "$setOnInsert": {
+                "campaign_id": campaign_id,
+                "tenant_user_id": tenant_user_id,
+                "date": today,
+            },
         },
         upsert=True,
         return_document=False,
@@ -42,11 +46,18 @@ async def try_consume_daily_cap(
     return True
 
 
-async def release_daily_cap(db: AsyncIOMotorDatabase, campaign_id: str) -> None:
+async def release_daily_cap(
+    db: AsyncIOMotorDatabase, campaign_id: str, tenant_user_id: str
+) -> None:
     """Decrement counter if a send that reserved a slot ultimately failed."""
     today = _today_utc()
     await db.campaign_stats.update_one(
-        {"campaign_id": campaign_id, "date": today, "sends": {"$gt": 0}},
+        {
+            "campaign_id": campaign_id,
+            "tenant_user_id": tenant_user_id,
+            "date": today,
+            "sends": {"$gt": 0},
+        },
         {"$inc": {"sends": -1}},
     )
 
@@ -109,7 +120,11 @@ async def try_consume_token_bucket(
 
 
 async def increment_stat(
-    db: AsyncIOMotorDatabase, campaign_id: str, counter: str, delta: int = 1
+    db: AsyncIOMotorDatabase,
+    campaign_id: str,
+    tenant_user_id: str,
+    counter: str,
+    delta: int = 1,
 ) -> None:
     """Generic daily-rollup counter increment (opens, clicks, bounces, etc.)."""
     today = _today_utc()
@@ -118,14 +133,23 @@ async def increment_stat(
         {
             "$inc": {counter: delta},
             "$set": {"last_updated_at": datetime.now(timezone.utc)},
-            "$setOnInsert": {"campaign_id": campaign_id, "date": today},
+            "$setOnInsert": {
+                "campaign_id": campaign_id,
+                "tenant_user_id": tenant_user_id,
+                "date": today,
+            },
         },
         upsert=True,
     )
 
 
-async def today_rollup(db: AsyncIOMotorDatabase, campaign_id: str) -> dict[str, Any]:
+async def today_rollup(
+    db: AsyncIOMotorDatabase, campaign_id: str, tenant_user_id: str | None = None
+) -> dict[str, Any]:
     today = _today_utc()
-    doc = await db.campaign_stats.find_one({"campaign_id": campaign_id, "date": today}) or {}
+    query: dict[str, Any] = {"campaign_id": campaign_id, "date": today}
+    if tenant_user_id:
+        query["tenant_user_id"] = tenant_user_id
+    doc = await db.campaign_stats.find_one(query) or {}
     doc.pop("_id", None)
     return doc

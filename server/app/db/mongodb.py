@@ -58,6 +58,10 @@ async def _ensure_indexes(db: AsyncIOMotorDatabase) -> None:
     await db.send_queue.create_index(
         [("status", 1), ("scheduled_for", 1)], name="hot_due_work"
     )
+    await db.send_queue.create_index(
+        [("tenant_user_id", 1), ("status", 1), ("scheduled_for", 1)],
+        name="tenant_due_work",
+    )
     await db.send_queue.create_index("lease_expires_at", name="lease_sweep")
 
     # campaign_leases: TTL on expires_at (Mongo auto-expires docs)
@@ -68,6 +72,9 @@ async def _ensure_indexes(db: AsyncIOMotorDatabase) -> None:
     # campaign_stats
     await db.campaign_stats.create_index(
         [("campaign_id", 1), ("date", 1)], unique=True, name="uniq_campaign_day"
+    )
+    await db.campaign_stats.create_index(
+        [("tenant_user_id", 1), ("date", 1)], name="tenant_day_rollup"
     )
 
     # mcp_instance_registry: TTL so dead containers disappear after 10 minutes of no heartbeat

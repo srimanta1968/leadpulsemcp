@@ -109,7 +109,7 @@ async def _process_one(doc: dict[str, Any], active_campaigns: dict[str, dict[str
 
     # Daily cap
     daily_cap = int(campaign_summary.get("daily_send_cap", 0) or 0)
-    if daily_cap and not await throttle_service.try_consume_daily_cap(db, campaign_id, daily_cap):
+    if daily_cap and not await throttle_service.try_consume_daily_cap(db, campaign_id, tenant_user_id, daily_cap):
         # Return to pending so it's reconsidered tomorrow.
         await sqs.mark_status(db, doc["_id"], "pending", last_error="daily_cap_reached")
         return
@@ -122,7 +122,7 @@ async def _process_one(doc: dict[str, Any], active_campaigns: dict[str, dict[str
         db, tenant_user_id, provider_hint, refill, capacity
     ):
         if daily_cap:
-            await throttle_service.release_daily_cap(db, campaign_id)
+            await throttle_service.release_daily_cap(db, campaign_id, tenant_user_id)
         await sqs.mark_status(db, doc["_id"], "pending", last_error="provider_rate_limited")
         return
 
@@ -134,7 +134,7 @@ async def _process_one(doc: dict[str, Any], active_campaigns: dict[str, dict[str
     except Exception as exc:  # noqa: BLE001
         await sqs.mark_status(db, doc["_id"], "failed", last_error=f"resolve_secret: {exc}")
         if daily_cap:
-            await throttle_service.release_daily_cap(db, campaign_id)
+            await throttle_service.release_daily_cap(db, campaign_id, tenant_user_id)
         return
 
     # Load contact
@@ -182,7 +182,7 @@ async def _process_one(doc: dict[str, Any], active_campaigns: dict[str, dict[str
             db, doc["_id"], "sent",
             provider_message_id=result.provider_message_id, provider=result.provider,
         )
-        await throttle_service.increment_stat(db, campaign_id, "delivered", 1)
+        await throttle_service.increment_stat(db, campaign_id, tenant_user_id, "delivered", 1)
         metric_counter("mcp.sender.emails_sent_total", 1, {"provider": result.provider})
         try:
             await lpc_mod.leadpulse_client.post_tracker_event(
@@ -197,10 +197,10 @@ async def _process_one(doc: dict[str, Any], active_campaigns: dict[str, dict[str
                        {"provider": result.provider, "type": result.bounce_type or "hard"})
         await rcs.mark_bounce(db, email, result.bounce_type or "hard", decay_points=100)
         await throttle_service.increment_stat(
-            db, campaign_id, "bounces_hard" if result.bounce_type == "hard" else "bounces_soft", 1
+            db, campaign_id, tenant_user_id, "bounces_hard" if result.bounce_type == "hard" else "bounces_soft", 1
         )
         if daily_cap:
-            await throttle_service.release_daily_cap(db, campaign_id)
+            await throttle_service.release_daily_cap(db, campaign_id, tenant_user_id)
         try:
             await lpc_mod.leadpulse_client.post_tracker_event(
                 {
@@ -217,7 +217,7 @@ async def _process_one(doc: dict[str, Any], active_campaigns: dict[str, dict[str
         await sqs.mark_status(db, doc["_id"], "failed", last_error=result.error)
         metric_counter("mcp.sender.emails_failed_total", 1, {"provider": result.provider})
         if daily_cap:
-            await throttle_service.release_daily_cap(db, campaign_id)
+            await throttle_service.release_daily_cap(db, campaign_id, tenant_user_id)
         log.warning("send_failed", extra={**log_extra, "extra_payload": {"err": result.error}})
 
     # Completion detection
