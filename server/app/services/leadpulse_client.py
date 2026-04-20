@@ -437,5 +437,21 @@ class LeadPulseClient:
     async def post_forecast(self, payload: dict[str, Any]) -> dict[str, Any]:
         return await self._post_or_buffer("/api/mcp/forecast-push", payload)
 
+    async def get_tenant_quotas(self) -> dict[str, Any] | None:
+        """Fetch plan-tier per-tenant quotas from the CRM.
+
+        Returns the response body on success, or ``None`` when the CRM
+        endpoint isn't available yet (CRM TK-2655 is still backlog at
+        time of writing — a 404 is expected until that ships). Lets the
+        quota_refresher loop degrade gracefully without needing a
+        feature flag on the MCP side.
+        """
+        try:
+            return await self._request("GET", "/api/mcp/tenant-quotas")
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                return None
+            raise
+
 
 leadpulse_client = LeadPulseClient()

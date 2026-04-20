@@ -29,7 +29,7 @@ from app.core.errors import register_error_handlers
 from app.core.logging import configure_logging, get_logger
 from app.core.runtime_config import RuntimeConfig, runtime_config
 from app.db.mongodb import close_mongo_connection, connect_to_mongo
-from app.services import pending_crm_events
+from app.services import pending_crm_events, tenant_quotas
 from app.services.leadpulse_client import leadpulse_client  # noqa: F401 — imported for singleton side-effects
 
 log = get_logger(__name__)
@@ -179,6 +179,7 @@ async def _wait_and_start_agents() -> None:
             await asyncio.sleep(30)
 
     supervisor.register("pending_events_replay", _replay_loop)
+    supervisor.register("tenant_quotas_refresher", tenant_quotas.run)
 
     await supervisor.start_all()
     log.info("supervisor_started", extra={"extra_payload": {"sender_agents": K}})

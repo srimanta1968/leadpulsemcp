@@ -25,6 +25,7 @@ from app.services import (
     refined_contacts_service as rcs,
     send_queue_service as sqs,
     template_renderer,
+    tenant_quotas as tq_mod,
     throttle_service,
 )
 
@@ -167,11 +168,25 @@ async def _process_one(doc: dict[str, Any], active_campaigns: dict[str, dict[str
         await sqs.mark_status(db, doc["_id"], "skipped_hygiene")
         return
 
-    # Daily cap
+    # Plan-tier per-tenant daily cap (from CRM tenant-quotas cache).
+    # No-op when the CRM endpoint hasn't shipped — tq.get returns None.
+    tq = tq_mod.tenant_quotas.get(tenant_user_id)
+    tenant_daily_cap = tq.daily_cap if tq else 0
+    if tenant_daily_cap and not await throttle_service.try_consume_tenant_daily_cap(
+        db, tenant_user_id, tenant_daily_cap
+    ):
+        await sqs.mark_status(
+            db, doc["_id"], "pending", last_error="tenant_daily_cap_reached"
+        )
+        return
+
+    # Per-campaign daily cap
     cfg = campaign_summary.get("config") or campaign_summary
     daily_cap = int(cfg.get("daily_send_cap", 0) or campaign_summary.get("daily_send_cap", 0) or 0)
     if daily_cap and not await throttle_service.try_consume_daily_cap(db, campaign_id, tenant_user_id, daily_cap):
         # Return to pending so it's reconsidered tomorrow.
+        if tenant_daily_cap:
+            await throttle_service.release_tenant_daily_cap(db, tenant_user_id)
         await sqs.mark_status(db, doc["_id"], "pending", last_error="daily_cap_reached")
         return
 
