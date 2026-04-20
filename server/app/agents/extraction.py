@@ -147,14 +147,16 @@ async def _ingest_file(
     # Enqueue sends for each contact x step
     tracker_ids = {t.get("email"): t.get("tracker_id") for t in (file_info.get("trackers") or [])}
     start_date = _parse_start_date(campaign.get("start_date"))
-    send_window_start = (campaign.get("config") or campaign).get("send_window_start", "09:00")
+    cfg = campaign.get("config") or campaign
+    send_window_start = cfg.get("send_window_start", "09:00")
+    tz_name = cfg.get("timezone", "UTC")
 
     inserted_sends = 0
     for row in rows:
         email = row["email"]
         contact_id = await _lookup_contact_id(db, campaign_id, email)
         for step in steps:
-            scheduled = _compute_scheduled_for(start_date, step, send_window_start)
+            scheduled = _compute_scheduled_for(start_date, step, send_window_start, tz_name)
             tracker_id = tracker_ids.get(email) or f"{campaign_id}:{email}:{step.get('step_index', 0)}"
             if await sqs.enqueue_send(
                 db,
@@ -231,12 +233,23 @@ def _parse_start_date(value: Any) -> datetime:
 
 
 def _compute_scheduled_for(
-    start_date: datetime, step: dict[str, Any], send_window_start: str
+    start_date: datetime,
+    step: dict[str, Any],
+    send_window_start: str,
+    tz_name: str = "UTC",
 ) -> datetime:
     from datetime import timedelta
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
     offset_days = int(step.get("send_offset_days", 0))
     offset_hours = int(step.get("send_offset_hours", 0))
     hh, mm = (int(x) for x in send_window_start.split(":"))
-    target = start_date + timedelta(days=offset_days, hours=offset_hours)
-    return target.replace(hour=hh, minute=mm, second=0, microsecond=0)
+    try:
+        tz = ZoneInfo(tz_name or "UTC")
+    except ZoneInfoNotFoundError:
+        tz = ZoneInfo("UTC")
+    # Place the HH:MM slot in the campaign's local tz, then convert to UTC
+    # so Mongo stores a tz-aware UTC value for scheduled_for.
+    local = start_date.astimezone(tz) + timedelta(days=offset_days, hours=offset_hours)
+    local = local.replace(hour=hh, minute=mm, second=0, microsecond=0)
+    return local.astimezone(timezone.utc)
