@@ -23,11 +23,44 @@ log = get_logger(__name__)
 _HEARTBEAT_INTERVAL_SECONDS = 30
 _DRAIN_GRACE_SECONDS = 60
 
+# Monotonic start time used to surface uptime in the heartbeat payload.
+import time as _time
+
+_STARTED_AT_MONO = _time.monotonic()
+
+
+def _uptime_seconds() -> int:
+    return int(_time.monotonic() - _STARTED_AT_MONO)
+
+
+def _allocation_payload() -> dict[str, Any]:
+    """Shape the container's agent-allocation for register + heartbeat
+    bodies. Empty dict when CPU_VCPU / RAM_MB weren't supplied (legacy
+    single-tenant dev) — the CRM Fleet Dashboard then renders the row
+    without the capacity column.
+    """
+    cfg = runtime_config.get()
+    if cfg.cpu_vcpu <= 0 or cfg.ram_mb <= 0:
+        return {}
+    from app.core.allocation import compute_allocation
+
+    alloc = compute_allocation(cfg.cpu_vcpu, cfg.ram_mb)
+    return {
+        "cpu_vcpu": cfg.cpu_vcpu,
+        "ram_mb": cfg.ram_mb,
+        "senders": alloc.senders,
+        "extraction": alloc.extraction,
+        "hygiene_eligible": alloc.hygiene_eligible,
+        "daily_capacity": alloc.daily_capacity,
+    }
+
 
 async def register_once() -> None:
     """Called at startup after bootstrap. Receives per-instance HMAC secret."""
     try:
-        resp = await lpc_mod.leadpulse_client.register()
+        resp = await lpc_mod.leadpulse_client.register(
+            allocation=_allocation_payload() or None,
+        )
         has_secret = runtime_config.get().hmac_secret is not None
         log.info(
             "mcp_registered",
@@ -106,7 +139,11 @@ async def _send_heartbeat(status_override: str | None = None) -> None:
         "mongo_lag_ms": snap.mongo_latency_ms,
         "campaigns_in_flight": campaigns_in_flight,
         "health_messages": snap.messages,
+        "uptime_seconds": _uptime_seconds(),
     }
+    allocation = _allocation_payload()
+    if allocation:
+        payload["allocation"] = allocation
 
     await db.mcp_instance_registry.update_one(
         {"_id": cfg.instance_id},

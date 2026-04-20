@@ -33,6 +33,11 @@ class RuntimeConfig:
     hmac_secret: str | None = None
     hmac_secret_previous: str | None = None  # during rotation
     mcp_bootstrap_key: str | None = None  # used only for the one-time POST /api/mcp/register
+    # Container size envelope read at boot from ECS env (CPU_VCPU / RAM_MB).
+    # Drives compute_allocation() and is echoed back to the CRM in register/
+    # heartbeat so the fleet dashboard can reconcile expected vs actual.
+    cpu_vcpu: float = 0.0
+    ram_mb: int = 0
 
     def redacted(self) -> dict[str, Any]:
         return {
@@ -40,6 +45,8 @@ class RuntimeConfig:
             "leadpulse_url": self.leadpulse_url,
             "mongodb_db": self.mongodb_db,
             "sender_agents_per_container": self.sender_agents_per_container,
+            "cpu_vcpu": self.cpu_vcpu,
+            "ram_mb": self.ram_mb,
             "configured": True,
             "has_hmac_secret": self.hmac_secret is not None,
         }

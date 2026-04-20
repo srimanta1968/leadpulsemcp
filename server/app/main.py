@@ -62,7 +62,25 @@ def _try_bootstrap_from_env() -> RuntimeConfig | None:
     # Derive instance_id if the operator didn't pass one.
     instance_id = os.environ.get("INSTANCE_ID") or _derive_instance_id()
 
-    sender_agents = int(os.environ.get("SENDER_AGENTS_PER_CONTAINER", "4"))
+    # Container size envelope — ECS injects CPU_VCPU + RAM_MB from the task
+    # definition. If present, compute_allocation() derives the agent count;
+    # otherwise fall back to SENDER_AGENTS_PER_CONTAINER (default 4).
+    try:
+        cpu_vcpu = float(os.environ.get("CPU_VCPU", "0") or 0)
+    except ValueError:
+        cpu_vcpu = 0.0
+    try:
+        ram_mb = int(os.environ.get("RAM_MB", "0") or 0)
+    except ValueError:
+        ram_mb = 0
+
+    if cpu_vcpu > 0 and ram_mb > 0:
+        from app.core.allocation import compute_allocation
+
+        alloc = compute_allocation(cpu_vcpu, ram_mb)
+        sender_agents = alloc.senders
+    else:
+        sender_agents = int(os.environ.get("SENDER_AGENTS_PER_CONTAINER", "4"))
     sender_agents = max(1, min(16, sender_agents))
 
     return RuntimeConfig(
@@ -73,6 +91,8 @@ def _try_bootstrap_from_env() -> RuntimeConfig | None:
         instance_id=instance_id,
         sender_agents_per_container=sender_agents,
         mcp_bootstrap_key=os.environ["MCP_BOOTSTRAP_KEY"],
+        cpu_vcpu=cpu_vcpu,
+        ram_mb=ram_mb,
     )
 
 
@@ -103,12 +123,37 @@ async def _wait_and_start_agents() -> None:
     cfg = await runtime_config.wait_until_ready()
     log.info("bootstrap_received", extra={"extra_payload": cfg.redacted()})
 
+    # Task #43: resolve agent allocation from the container's ECS task size.
+    # When CPU_VCPU + RAM_MB arrive from the task definition, compute_allocation
+    # is the source of truth for sender count and hygiene-singleton eligibility.
+    # Otherwise fall back to cfg.sender_agents_per_container.
+    if cfg.cpu_vcpu > 0 and cfg.ram_mb > 0:
+        from app.core.allocation import compute_allocation
+
+        alloc = compute_allocation(cfg.cpu_vcpu, cfg.ram_mb)
+        K = alloc.senders
+        hygiene_eligible = alloc.hygiene_eligible
+        log.info(
+            "agent_allocation_computed",
+            extra={"extra_payload": {
+                "cpu_vcpu": cfg.cpu_vcpu,
+                "ram_mb": cfg.ram_mb,
+                "senders": alloc.senders,
+                "extraction": alloc.extraction,
+                "hygiene_eligible": alloc.hygiene_eligible,
+                "daily_capacity": alloc.daily_capacity,
+            }},
+        )
+    else:
+        K = cfg.sender_agents_per_container
+        hygiene_eligible = True  # keep legacy single-tenant behavior
+
     await heartbeat.register_once()
 
-    K = cfg.sender_agents_per_container
     supervisor.register("heartbeat", heartbeat.run)
     supervisor.register("extraction", extraction.run)
-    supervisor.register("hygiene", hygiene.run)
+    if hygiene_eligible:
+        supervisor.register("hygiene", hygiene.run)
     for i in range(K):
         agent_uid = f"sender_{i}"
         is_sweeper = i == 0

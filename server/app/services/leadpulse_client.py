@@ -320,7 +320,7 @@ class LeadPulseClient:
             return {"success": False, "buffered": True, "endpoint": endpoint}
 
     # ------------------------------------------------------- 11 MCP->CRM endpoints
-    async def register(self) -> dict[str, Any]:
+    async def register(self, allocation: dict[str, Any] | None = None) -> dict[str, Any]:
         """One-time register. Signs with MCP_BOOTSTRAP_KEY (if supplied at
         bootstrap time); stores the per-instance HMAC secret returned by CRM.
 
@@ -331,9 +331,17 @@ class LeadPulseClient:
                         "config": {...} } }
         The per-instance secret must be stored and used to sign EVERY
         subsequent CRM call (heartbeat, campaigns, tracker-event, etc.).
+
+        ``allocation``: optional agent-allocation summary
+        (``{cpu_vcpu, ram_mb, senders, extraction, hygiene_eligible,
+        daily_capacity}``) computed from the container's ECS task size.
+        Lets the CRM Fleet Dashboard reconcile expected vs actual capacity
+        without a second round-trip.
         """
         cfg = runtime_config.get()
-        body = {"instanceId": cfg.instance_id, "instance_id": cfg.instance_id}
+        body: dict[str, Any] = {"instanceId": cfg.instance_id, "instance_id": cfg.instance_id}
+        if allocation:
+            body["allocation"] = allocation
         body_bytes = json.dumps(body, separators=(",", ":")).encode("utf-8")
         path = "/api/mcp/register"
         url = f"{self._base()}{path}"
