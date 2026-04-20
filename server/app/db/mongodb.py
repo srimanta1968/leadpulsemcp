@@ -6,10 +6,20 @@ operational data (bounce_events, pending_crm_events).
 """
 from __future__ import annotations
 
+import hashlib
+
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 
 from app.core.logging import get_logger
 from app.core.runtime_config import runtime_config
+
+
+def tenant_shard_key(tenant_user_id: str) -> str:
+    """Deterministic hash used as the Mongo shard key on multi-tenant
+    collections. Pre-declared even before sharding is enabled so Phase 2
+    sharding needs zero backfill (see docs/3phase_implementation.md).
+    """
+    return hashlib.sha256(str(tenant_user_id).encode("utf-8")).hexdigest()[:16]
 
 log = get_logger(__name__)
 
@@ -106,6 +116,18 @@ async def _ensure_indexes(db: AsyncIOMotorDatabase) -> None:
     await db.provider_rate_buckets.create_index(
         [("user_id", 1), ("provider", 1)], unique=True, name="uniq_bucket"
     )
+
+    # tenant_cursors — single global doc used by send_queue.lease_batch()
+    # to round-robin across tenants. One cursor shared by every container
+    # in the fleet; no pool_id field.
+    await db.tenant_cursors.create_index("_id", name="by_id")
+
+    # Shard-key indexes on multi-tenant collections. Pre-declared now so
+    # Phase 2 sharding needs zero backfill.
+    await db.send_queue.create_index("shard_key", name="shard_key")
+    await db.campaign_contacts.create_index("shard_key", name="shard_key")
+    await db.refined_contacts.create_index("shard_key", name="shard_key")
+    await db.campaign_stats.create_index("shard_key", name="shard_key")
 
 
 async def connect_to_mongo() -> AsyncIOMotorDatabase:

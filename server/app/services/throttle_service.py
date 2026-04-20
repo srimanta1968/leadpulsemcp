@@ -10,6 +10,8 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.db.mongodb import tenant_shard_key
+
 
 def _today_utc() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -96,6 +98,7 @@ async def try_consume_daily_cap(
             "$setOnInsert": {
                 "campaign_id": campaign_id,
                 "tenant_user_id": tenant_user_id,
+                "shard_key": tenant_shard_key(tenant_user_id),
                 "date": today,
             },
         },
@@ -202,6 +205,7 @@ async def increment_stat(
             "$setOnInsert": {
                 "campaign_id": campaign_id,
                 "tenant_user_id": tenant_user_id,
+                "shard_key": tenant_shard_key(tenant_user_id),
                 "date": today,
             },
         },

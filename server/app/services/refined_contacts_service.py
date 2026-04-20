@@ -12,6 +12,8 @@ from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import UpdateOne
 
+from app.db.mongodb import tenant_shard_key
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
@@ -31,6 +33,7 @@ async def upsert_campaign_contact(
         "_id": ObjectId(),
         "campaign_id": campaign_id,
         "tenant_user_id": tenant_user_id,
+        "shard_key": tenant_shard_key(tenant_user_id),
         "email": email,
         "first_name": row.get("first_name", ""),
         "last_name": row.get("last_name", ""),
@@ -174,6 +177,7 @@ async def bulk_upsert(
                 "_id": ObjectId(),
                 "campaign_id": campaign_id,
                 "tenant_user_id": tenant_user_id,
+                "shard_key": tenant_shard_key(tenant_user_id),
                 "email": email,
                 "first_name": row.get("first_name", ""),
                 "last_name": row.get("last_name", ""),
