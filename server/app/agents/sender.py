@@ -81,6 +81,32 @@ async def run(agent_uid: str, is_sweeper: bool = False) -> None:
             await _process_one(doc, active_campaigns_cache)
 
 
+def _within_send_window(campaign_summary: dict[str, Any]) -> bool:
+    from datetime import time as _time
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+    cfg = campaign_summary.get("config") or campaign_summary
+    tz_name = cfg.get("timezone") or "UTC"
+    start_s = cfg.get("send_window_start") or "00:00"
+    end_s = cfg.get("send_window_end") or "23:59"
+    try:
+        tz = ZoneInfo(tz_name)
+    except ZoneInfoNotFoundError:
+        tz = ZoneInfo("UTC")
+    try:
+        sh, sm = (int(x) for x in start_s.split(":"))
+        eh, em = (int(x) for x in end_s.split(":"))
+    except (ValueError, AttributeError):
+        return True
+    now_local = datetime.now(tz).time()
+    start_t = _time(sh, sm)
+    end_t = _time(eh, em)
+    if start_t <= end_t:
+        return start_t <= now_local <= end_t
+    # Window wraps past midnight (e.g. 22:00-06:00) — treat as union.
+    return now_local >= start_t or now_local <= end_t
+
+
 async def _refresh_active_campaigns() -> dict[str, dict[str, Any]]:
     resp = await lpc_mod.leadpulse_client.get_active_campaigns()
     out: dict[str, dict[str, Any]] = {}
@@ -100,6 +126,13 @@ async def _process_one(doc: dict[str, Any], active_campaigns: dict[str, dict[str
     campaign_summary = active_campaigns.get(campaign_id) or {}
     if campaign_summary.get("paused"):
         await sqs.mark_status(db, doc["_id"], "pending", last_error="paused")
+        return
+
+    # Campaign send-window gate — defer if outside [send_window_start, send_window_end]
+    # in the campaign's configured timezone. Keeps sends aligned with the user's
+    # local business hours regardless of where the MCP container runs.
+    if not _within_send_window(campaign_summary):
+        await sqs.mark_status(db, doc["_id"], "pending", last_error="outside_window")
         return
 
     # Hygiene gate
