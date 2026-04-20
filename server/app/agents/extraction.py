@@ -238,7 +238,7 @@ def _compute_scheduled_for(
     send_window_start: str,
     tz_name: str = "UTC",
 ) -> datetime:
-    from datetime import timedelta
+    from datetime import time as _time, timedelta
     from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
     offset_days = int(step.get("send_offset_days", 0))
@@ -248,8 +248,11 @@ def _compute_scheduled_for(
         tz = ZoneInfo(tz_name or "UTC")
     except ZoneInfoNotFoundError:
         tz = ZoneInfo("UTC")
-    # Place the HH:MM slot in the campaign's local tz, then convert to UTC
-    # so Mongo stores a tz-aware UTC value for scheduled_for.
-    local = start_date.astimezone(tz) + timedelta(days=offset_days, hours=offset_hours)
-    local = local.replace(hour=hh, minute=mm, second=0, microsecond=0)
+    # Take the calendar date from start_date as-is (the CRM stores it as
+    # the user's chosen start day, typically serialized as UTC midnight),
+    # combine with HH:MM in the campaign's tz, then convert to UTC. This
+    # avoids a negative-offset tz (e.g. America/Los_Angeles) rolling the
+    # calendar day backwards when start_date is UTC midnight.
+    local = datetime.combine(start_date.date(), _time(hh, mm), tzinfo=tz)
+    local += timedelta(days=offset_days, hours=offset_hours)
     return local.astimezone(timezone.utc)
