@@ -15,6 +15,8 @@ from app.api.deps import require_db, verify_crm_hmac
 from app.core.logging import get_logger
 from app.services import throttle_service
 
+# @governance-tracked — API definitions added: POST /api/v1/admin/scale-hint, GET /api/v1/admin/live-stats/:campaign_id
+
 log = get_logger(__name__)
 router = APIRouter()
 

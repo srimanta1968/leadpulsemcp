@@ -5,6 +5,8 @@ from app.core.runtime_config import RuntimeConfig, runtime_config
 from app.db.mongodb import close_mongo_connection, connect_to_mongo
 from app.schemas.bootstrap import BootstrapRequest, BootstrapResponse
 
+# @governance-tracked — API definitions added: POST /api/v1/bootstrap
+
 router = APIRouter()
 
 

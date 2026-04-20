@@ -14,6 +14,8 @@ from pydantic import BaseModel, EmailStr
 from app.agents import hygiene
 from app.api.deps import require_db, verify_crm_hmac
 
+# @governance-tracked — API definitions added: GET /api/v1/contacts/lookup, POST /api/v1/contacts/mark-converted, POST /api/v1/contacts/mark-unsubscribed
+
 router = APIRouter()
 
 
