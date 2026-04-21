@@ -1,0 +1,24 @@
+{
+  "reportType": "todos",
+  "source": "pre-push",
+  "timestamp": "2026-04-19T22:37:10Z",
+  "priority": "end-of-sprint",
+  "description": "TODO items found during pre-push hook. These should be addressed before sprint end.",
+  "summary": {
+    "total": 1,
+    "api_related": 0,
+    "general": 1
+  },
+  "items": [{
+      "file": "server/app/agents/hygiene.py",
+      "line": 93,
+      "content": "         # TODO-integration: call ZeroBounce / NeverBounce here.",
+      "category": "general",
+      "priority": "normal"
+    }],
+  "llm_prompt": "Please review and fix the TODO items in this pre-push report. Focus on API-related TODOs first (priority: high) as they may indicate incomplete API integrations or temporary mocks. For each TODO: 1) Search api_library for available APIs that might fulfill the requirement, 2) Replace mocks with actual API calls if APIs exist, 3) If API is not available, coordinate with team or mark for later sprint.",
+  "actionable_commands": {
+    "search_apis": "curl -X POST http://localhost:8766/api/search-apis -H 'Content-Type: application/json' -d '{\"pattern\": \"your-search-term\"}'",
+    "find_all_todos": "grep -rn 'TODO\|FIXME' . --include='*.ts' --include='*.tsx' --include='*.js' --include='*.py'"
+  }
+}

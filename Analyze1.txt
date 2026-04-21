@@ -1,0 +1,142 @@
+● Good call — this simplifies the design significantly. Let me revise.                                                                                                                            
+                                                                                          
+  What changes from my earlier plan                                                                                                                                                               
+                                                                                                                                                                                                  
+  Drop entirely:                                                                                                                                                                                  
+  - mcp_pool_assignments table (Change #9) — not needed                                                                                                                                           
+  - pool_id parameter on GET /api/mcp/pool-work (Change #8) — containers are anonymous                                                                                                            
+  - tenant_cursors per-pool structure — becomes one global cursor                                                                                                                                 
+                                                                                                                                                                                                  
+  Reason: if any container can serve any tenant, there's no reason to pre-assign tenants to pools. Tenants are partitioned by the global round-robin cursor at lease time, not by static
+  configuration. This is strictly simpler and more elastic.
+
+  Keep as-is:
+  - mcp_worker_instances — already the fleet registry, heartbeat target, and agent inventory. Reuse unchanged.
+  - Per-tenant fair-lease logic in send_queue_service.py — still needed, just without pool scoping.
+  - All CRM campaign + MCP plumbing already built.
+
+  Revised architecture
+
+    LeadPulse CRM
+         │
+         ├── Autonomous Fleet Manager (new service)
+         │     ├── reads  campaigns.config  (send_window, timezone, daily_cap)
+         │     ├── reads  campaigns.stats_daily  (sends remaining)
+         │     ├── reads  mcp_worker_instances  (current fleet + agent count)
+         │     ├── computes  hourly demand curve (next 24h, per tenant, UTC-normalized)
+         │     ├── sums     aggregate sends/hour
+         │     ├── derives  required_agents[h] = sends[h] / SENDS_PER_AGENT_PER_HOUR
+         │     ├── derives  required_containers[h] = ceil(required_agents[h] / AGENTS_PER_CONTAINER)
+         │     └── calls ECS UpdateService(desired=max(required_containers[next 2h]))
+         │
+         └── existing campaign/tracker/admin routes unchanged
+
+    MCP Fleet (anonymous containers, no pool_id)
+         │
+         ├── on heartbeat: POST /api/mcp/heartbeat → upserts mcp_worker_instances
+         ├── on extraction: GET /api/mcp/active-work?since=<ts> (across all tenants)
+         └── on send: round-robin over all tenants via global tenant_cursor
+
+  The Fleet Manager — what it does every 5 minutes
+
+  New file: server/src/services/autonomous-fleet-manager.service.ts
+
+  every 5 minutes:
+    1. for each running campaign:
+         hourly_projection[campaign] = distribute(
+           remaining_sends = Σ file.row_count × active_steps - stats_daily[today].sends,
+           window = config.send_window_start..send_window_end in config.timezone,
+           cap = config.daily_send_cap
+         )
+       → array of 24 buckets per campaign, in UTC
+
+    2. aggregate across all campaigns:
+         demand[h] = Σ_campaigns hourly_projection[campaign][h]
+         for h in [now, now+24h]
+
+    3. required_agents[h] = demand[h] / SENDS_PER_AGENT_PER_HOUR   (tunable, default ~180)
+       required_containers[h] = ceil(required_agents[h] / AGENTS_PER_CONTAINER)
+
+    4. target = max(required_containers[now..now+2h])  // look-ahead, avoid cold-start lag
+       current = count(mcp_worker_instances where status='active')
+
+       if target > current:   scale_up(target - current)          // immediate
+       if target < current:   schedule drain(current - target)    // anti-flap: wait 15min
+
+    5. write decision into system_settings.mcp.fleet.plan for audit + admin UI
+
+    6. for scale actions, write access_logs event_type='mcp_autoscale'
+
+  Why hourly (not daily) matters
+
+  A user with send_window 09:00–17:00 America/Los_Angeles at 10k/day sends zero between 17:00–09:00 LA time. Aggregate 1,000 such users and the demand curve looks like:
+
+  Sends/hour across fleet (1000 users × 10k/day, mixed US timezones):
+
+    12M ─┐
+        │       ╭──╮
+     8M ─┤    ╭──╯  ╰─╮
+        │   ╭──╯       ╰──╮
+     4M ─┤  ╱             ╲
+        │ ╱                ╲
+     0M ─┴──┬──┬──┬──┬──┬──┬──┬──
+          0  4  8 12 16 20  0  UTC
+
+  Peak is ~3× average. If you size for average, peak work queues backlog; if you size for peak 24/7, you waste 60% of capacity overnight.
+
+  With hourly autoscaling:
+  - Night (UTC 00–12): 2 containers idle-watching
+  - Peak (UTC 13–22): scale to 8 containers
+  - Cost: ~50% of flat-peak-sizing, same SLA
+
+  At 100k users this is $30k/mo savings vs static-peak fleet.
+
+  Safety guardrails the Fleet Manager enforces
+
+  ┌────────────────────────────────┬─────────────────────────────────────────┬────────────────────────────────────────────────────────────────────┐
+  │           Guardrail            │                  Value                  │                                Why                                 │
+  ├────────────────────────────────┼─────────────────────────────────────────┼────────────────────────────────────────────────────────────────────┤
+  │ Min containers                 │ 1                                       │ Always one sender alive so new campaigns launch without cold-start │
+  ├────────────────────────────────┼─────────────────────────────────────────┼────────────────────────────────────────────────────────────────────┤
+  │ Max containers                 │ 20 per pool (configurable)              │ Prevents runaway cost from buggy forecast                          │
+  ├────────────────────────────────┼─────────────────────────────────────────┼────────────────────────────────────────────────────────────────────┤
+  │ Min time between scale actions │ 15 min                                  │ Anti-flap                                                          │
+  ├────────────────────────────────┼─────────────────────────────────────────┼────────────────────────────────────────────────────────────────────┤
+  │ Scale-down requires            │ send rate below threshold for 2h        │ Don't kill a container still draining leased work                  │
+  ├────────────────────────────────┼─────────────────────────────────────────┼────────────────────────────────────────────────────────────────────┤
+  │ SIGTERM grace                  │ 60s                                     │ Finish in-flight sends, release leases, final heartbeat            │
+  ├────────────────────────────────┼─────────────────────────────────────────┼────────────────────────────────────────────────────────────────────┤
+  │ Emergency pause                │ if hard_bounce_rate_24h > 5% fleet-wide │ Pause all sends, alert admin — SendGrid reputation protection      │
+  └────────────────────────────────┴─────────────────────────────────────────┴────────────────────────────────────────────────────────────────────┘
+
+  All already described in design doc §11; the Fleet Manager is the thing that actually enforces them.
+
+  What this means for the Phase 1 sprint
+
+  Revised change list:
+
+  ┌─────┬─────────────────────────────────────────┬───────────────────────────────────────────────────────────────────────────────────┐
+  │  #  │                  File                   │                                      Change                                       │
+  ├─────┼─────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ 1   │ send_queue_service.py:56–90             │ Tenant-fair lease_batch() with global tenant_cursors (drop pool scoping)          │
+  ├─────┼─────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ 2   │ throttle_service.py                     │ Per-tenant daily cap enforcement                                                  │
+  ├─────┼─────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ 3   │ extraction.py                           │ Call GET /api/mcp/active-work?since=<ts> returning all tenants' running campaigns │
+  ├─────┼─────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ 4   │ mongodb.py                              │ Predeclare shard_key = hash(tenant_user_id) on all multi-tenant collections       │
+  ├─────┼─────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ 5   │ contact_parser.py:80                    │ ijson streaming for JSON                                                          │
+  ├─────┼─────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ 6   │ mcp.routes.ts                           │ New GET /api/mcp/active-work + new GET /api/mcp/tenant-quotas                     │
+  ├─────┼─────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ 7   │ campaigns.routes.ts:499                 │ Launch validation: all files must be ingestion_status='complete'                  │
+  ├─────┼─────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ 8   │ NEW autonomous-fleet-manager.service.ts │ Every 5 min: hourly forecast → ECS UpdateService                                  │
+  ├─────┼─────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ 9   │ campaign-forecast.service.ts            │ Add computeHourlyDemand(campaigns, hours=24) helper used by #8                    │
+  └─────┴─────────────────────────────────────────┴───────────────────────────────────────────────────────────────────────────────────┘
+
+  Dropped: old changes #9 (pool_assignments table), #10 (quotas endpoint scoped by pool_id), #12 (stats archival — keep, but not Phase 1 blocker), #13 (forecast fallback — subsumed by #8).
+
+  Net effect: one fewer table, one fewer concept (pool_id), one new service (Fleet Manager). Cleaner architecture, truer to what you described.

@@ -488,14 +488,16 @@ is_project_registered() {
             continue
         fi
 
-        if command -v jq &> /dev/null; then
-            if jq -e --arg path "$unix_path" '.[] | select(.projectPath == $path)' "$check_file" > /dev/null 2>&1; then
-                return 0
-            fi
-        else
-            if grep -q "\"projectPath\": *\"$unix_path\"" "$check_file" 2>/dev/null; then
-                return 0
-            fi
+        # IMPORTANT: on Windows Git Bash / MSYS, bash transparently rewrites
+        # any argument that looks like a Unix absolute path (e.g. /c/Users/...)
+        # to a Windows drive path (C:/Users/...) before handing it to a
+        # non-MSYS binary like jq. That mangling makes `--arg path "$unix_path"`
+        # arrive as a different string than the literal inside the JSON,
+        # so the match silently fails. Fall back to a grep (which is MSYS
+        # and doesn't get its stdin/args rewritten) — it's a perfectly
+        # adequate check for this specific shape of JSON.
+        if grep -q "\"projectPath\": *\"$unix_path\"" "$check_file" 2>/dev/null; then
+            return 0
         fi
     done
 
@@ -1249,10 +1251,56 @@ recover_env_from_registry() {
         return 0
     fi
 
-    # Get our own project path (the owner)
-    local owner_unix_path=$(get_unix_project_path)
+    # Strategy: the registry is the single source of truth. Delete EVERY
+    # multi-project entry from .env (all ADDITIONAL_PROJECT_N lines, their
+    # comment headers, and PROJECT_PATH_MAPPINGS), then re-emit them fresh
+    # from the registry. This avoids every class of accumulated drift:
+    # stale slot numbers, duplicate keys in PROJECT_PATH_MAPPINGS, orphan
+    # ADDITIONAL_PROJECT_N from prior slot assignments, CRLF corruption of
+    # previous sed operations, etc. Running this function is idempotent —
+    # if .env already matches the registry, the file ends up identical.
 
-    # Read additional projects (non-owner) from registry
+    local tmp
+    tmp=$(mktemp "${TMPDIR:-/tmp}/env_rebuild.XXXXXX")
+
+    # Step 1: strip all multi-project entries (data lines AND their
+    # comment headers) from .env. Non-multi-project content is preserved.
+    awk '
+        /^ADDITIONAL_PROJECT_[0-9]+=/                   { next }
+        /^# *Additional project [0-9]+ volume mount/    { next }
+        /^PROJECT_PATH_MAPPINGS=/                       { next }
+        /^# *Multi-project path mappings/               { next }
+        { print }
+    ' "$env_file" > "$tmp" && mv "$tmp" "$env_file"
+
+    # Step 2: collapse runs of blank lines created by the strip.
+    tmp=$(mktemp "${TMPDIR:-/tmp}/env_rebuild.XXXXXX")
+    awk 'NR==1{p=$0; print; next} !(p=="" && $0==""){print; p=$0}' \
+        "$env_file" > "$tmp" && mv "$tmp" "$env_file"
+
+    # Step 3: rebuild PROJECT_PATH_MAPPINGS from every registered project
+    # (both owner and additional). jq produces deterministic, valid JSON
+    # with no duplicate keys.
+    local fresh_mappings
+    fresh_mappings=$(jq -r '
+        to_entries
+        | map(select(.value.containerPath))
+        | map({(.value.projectPath): .value.containerPath})
+        | add
+        | if . == null then {} else . end
+        | tojson
+    ' "$reg_file" 2>/dev/null)
+
+    {
+        echo ""
+        echo "# Multi-project path mappings (JSON) — regenerated from registry"
+        echo "PROJECT_PATH_MAPPINGS='${fresh_mappings:-\{\}}'"
+    } >> "$env_file"
+
+    # Step 4: re-emit ADDITIONAL_PROJECT_N entries for every non-owner
+    # project whose containerPath is /projects/additionalN. The registry's
+    # isOwner flag is authoritative — we do NOT fall back to a path match
+    # with the caller's own project path (that was the original bug).
     local additional_projects
     additional_projects=$(jq -r '
         to_entries[]
@@ -1261,43 +1309,29 @@ recover_env_from_registry() {
         | "\(.value.containerPath | ltrimstr("/projects/additional"))|\(.value.projectPath)"
     ' "$reg_file" 2>/dev/null)
 
-    if [ -z "$additional_projects" ]; then
-        return 0  # No additional projects to recover
+    local emitted=0
+    if [ -n "$additional_projects" ]; then
+        while IFS='|' read -r slot unix_path; do
+            [ -z "$slot" ] || [ -z "$unix_path" ] && continue
+
+            # Convert Unix path to Windows path for Docker volume mount.
+            local windows_path="$unix_path"
+            if [[ "$unix_path" =~ ^/([a-z])/(.*) ]]; then
+                local drive="${BASH_REMATCH[1]}"
+                local rest="${BASH_REMATCH[2]}"
+                windows_path="${drive^}:/$rest"
+            fi
+
+            {
+                echo ""
+                echo "# Additional project $slot volume mount"
+                echo "ADDITIONAL_PROJECT_${slot}=$windows_path"
+            } >> "$env_file"
+            emitted=$((emitted + 1))
+        done <<< "$additional_projects"
     fi
 
-    local recovered=0
-    while IFS='|' read -r slot unix_path; do
-        if [ -z "$slot" ] || [ -z "$unix_path" ]; then
-            continue
-        fi
-
-        # Skip if this is the same as the owner project
-        if [ "$unix_path" = "$owner_unix_path" ]; then
-            continue
-        fi
-
-        # Convert Unix path to Windows path for Docker volume mount
-        local windows_path="$unix_path"
-        if [[ "$unix_path" =~ ^/([a-z])/(.*) ]]; then
-            local drive="${BASH_REMATCH[1]}"
-            local rest="${BASH_REMATCH[2]}"
-            windows_path="${drive^}:/$rest"
-        fi
-
-        # Check if ADDITIONAL_PROJECT_N is already set correctly
-        if grep -q "^ADDITIONAL_PROJECT_${slot}=${windows_path}$" "$env_file" 2>/dev/null; then
-            continue  # Already correct
-        fi
-
-        # Recover the entry
-        log "Recovering ADDITIONAL_PROJECT_${slot}=${windows_path} from registry"
-        update_additional_project_env "$slot" "$unix_path" "$env_file"
-        recovered=$((recovered + 1))
-    done <<< "$additional_projects"
-
-    if [ $recovered -gt 0 ]; then
-        log "Recovered $recovered additional project(s) from registry into .env"
-    fi
+    log "Rebuilt multi-project .env from registry (${emitted} additional slot(s))"
 }
 
 #===============================================================================

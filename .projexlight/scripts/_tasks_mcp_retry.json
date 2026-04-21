@@ -1,0 +1,77 @@
+{
+  "sessionToken": "WDnm//ZKbfu7Wb9iqFiTaIcY6d9fWOsHz/NJ2C1vET59AjqBNNmTNMvtz3qKSQ5pBEpOUZ4kES/MXoRuvWd1kkqMNytNomiSZsoFwLVQoUhK8YUNc1wQirFOIOimLJIhy5bbNiqK3apiZbcm44tBVvPMVRZuzPPp1mOYHOi+/eSwJ6ucxhoBLXBXNlOLsaFbLij/Xc6EYzIrzf1ifw==",
+  "projectId": "6f3a50a3-8701-42ae-b1c5-aa6e8a4ad0d8",
+  "projectPath": "/c/Users/srima/projex_verticals/LeadPulseMcp",
+  "tasks": [
+    {
+      "title": "Create global tenant_cursors collection for round-robin",
+      "description": "New Mongo collection tenant_cursors with single document {_id:global, last_tenant_id, last_picked_at}. Atomic findOneAndUpdate advances cursor in lease_batch. Handle empty-tenant and wrap-around cases.",
+      "task_type": "backend",
+      "feature_id": "3c41cadf-dcac-4140-a667-5b6da799f274",
+      "epic_id": "cf82e40d-b86b-4609-9fcb-f608b6b96af9",
+      "sprint_id": "7f503ef9-3bf1-4ce9-b055-9f4824e676a1",
+      "priority": "critical",
+      "acceptance_criteria": [
+        "tenant_cursors collection created with single _id:global document",
+        "Atomic findOneAndUpdate used to advance cursor",
+        "Cursor wraps around when reaching end of tenant list"
+      ]
+    },
+    {
+      "title": "Per-tenant daily cap check in throttle_service",
+      "description": "Add try_consume_tenant_daily_cap(tenant_user_id, limit) to server/app/services/throttle_service.py. Uses tenant_stats_daily keyed by (tenant_user_id, date_utc) with atomic $inc. Invoked in lease_batch before leasing; skip tenant on cap exhausted. Limit loaded from /api/mcp/tenant-quotas.",
+      "task_type": "backend",
+      "feature_id": "3c41cadf-dcac-4140-a667-5b6da799f274",
+      "epic_id": "cf82e40d-b86b-4609-9fcb-f608b6b96af9",
+      "sprint_id": "7f503ef9-3bf1-4ce9-b055-9f4824e676a1",
+      "priority": "high",
+      "acceptance_criteria": [
+        "try_consume_tenant_daily_cap returns bool atomically",
+        "tenant_stats_daily collection holds counter",
+        "lease_batch skips tenant when cap exhausted"
+      ]
+    },
+    {
+      "title": "Include allocation in register payload",
+      "description": "Extend POST /api/mcp/register body so CRM learns container size and allocation: cpu_vcpu, ram_mb, sender_agents, extraction_agents, hygiene_eligible, daily_capacity. CRM persists on mcp_worker_instances.",
+      "task_type": "backend",
+      "feature_id": "78c24fe4-7afd-4f87-9d30-740928df1068",
+      "epic_id": "cf82e40d-b86b-4609-9fcb-f608b6b96af9",
+      "sprint_id": "7f503ef9-3bf1-4ce9-b055-9f4824e676a1",
+      "priority": "high",
+      "acceptance_criteria": [
+        "Register payload includes cpu_vcpu, ram_mb, sender_agents, extraction_agents, daily_capacity",
+        "CRM persists these on mcp_worker_instances",
+        "Hygiene election ignores hygiene_eligible=false containers"
+      ]
+    },
+    {
+      "title": "Tenant quotas refresh loop",
+      "description": "New server/app/services/quota_refresher.py calls GET /api/mcp/tenant-quotas every 15 min. Caches per-tenant daily_cap, per_hour_cap, plan_tier in process. throttle_service reads from cache. On auth failure, tries refresh-token once before alerting.",
+      "task_type": "backend",
+      "feature_id": "62737491-799a-4688-910d-5cc3bb8c3ab7",
+      "epic_id": "894a5b9c-06f2-4c0f-aaaa-7da7a7f86cbc",
+      "sprint_id": "7f503ef9-3bf1-4ce9-b055-9f4824e676a1",
+      "priority": "high",
+      "acceptance_criteria": [
+        "Quota cache refreshed every 15 min",
+        "throttle_service reads from cache never direct HTTP per send",
+        "Cache survives CRM transient outages up to 60 min"
+      ]
+    },
+    {
+      "title": "Per-tenant backlog counters in heartbeat",
+      "description": "Compute per-tenant send_queue pending counts and include in heartbeat metrics.per_tenant_backlog = {tenant_user_id: count}. Cached 30s. Used by CRM Fleet Manager to detect unfair starvation patterns.",
+      "task_type": "backend",
+      "feature_id": "e7e2432f-8675-494f-b8fa-f6f4767d3763",
+      "epic_id": "8d5d6ba0-4dcf-47a0-b1a8-4ad117c11e7f",
+      "sprint_id": "7f503ef9-3bf1-4ce9-b055-9f4824e676a1",
+      "priority": "medium",
+      "acceptance_criteria": [
+        "metrics.per_tenant_backlog populated each heartbeat",
+        "Aggregation query uses existing (status, scheduled_for) index",
+        "Empty tenants omitted from map"
+      ]
+    }
+  ]
+}

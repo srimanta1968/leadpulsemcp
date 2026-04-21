@@ -1,0 +1,1363 @@
+{
+  "last_scan": "2026-04-20T04:53:23.773506Z",
+  "scanned_files": {
+    ".claude/config/claude-config.json": {
+      "hash": "d54562430178e6dca21a55689250c6e7a123bb57a724e4e4fd6b4af4a92de218",
+      "compliance": 100,
+      "violations": [],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:35:42.964920Z",
+      "linesOfCode": 29
+    },
+    ".claude/settings.local.json": {
+      "hash": "b37825248b3490139cfde53d8b6b450aea0e559d899804aa8e5da5c06015f191",
+      "compliance": 100,
+      "violations": [],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:35:43.220232Z",
+      "linesOfCode": 18
+    },
+    "aws/cloudwatch-alarms.json": {
+      "hash": "993aace99e30b1781a14921c680b960191f446e8291a7222c724b0953f247495",
+      "compliance": 100,
+      "violations": [],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:35:43.589445Z",
+      "linesOfCode": 84
+    },
+    "aws/task-definition.json": {
+      "hash": "2ccf49150986ad5d0e29f9965ed278b39963f225061bb3215f08e2ab7178ff6a",
+      "compliance": 100,
+      "violations": [],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:35:43.855654Z",
+      "linesOfCode": 71
+    },
+    "claude_desktop_config.json": {
+      "hash": "4ff5429dacabe7573b8ff137ac1fafd895f13399a52c1fe08cc79447fad2554e",
+      "compliance": 100,
+      "violations": [],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:35:44.070807Z",
+      "linesOfCode": 14
+    },
+    "client/package.json": {
+      "hash": "dc2c67d74c46ff7f5a56ad8481be2fa195ccc5b133f5ff75409f231e94744c68",
+      "compliance": 100,
+      "violations": [],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:35:44.341025Z",
+      "linesOfCode": 26
+    },
+    "client/src/App.tsx": {
+      "hash": "0001677c77566a2a899ea3acb3a136b5078ec1a08fda2f595b08e05ca2c06a52",
+      "compliance": 100,
+      "violations": [],
+      "standards_version": "sha256:7cf517c6c97eb3c02613c89ab9ab90c84e2a2020608d1abb82ce6a55ba803f62",
+      "custom_violations": [],
+      "timestamp": "2026-04-20T04:42:14.553559Z",
+      "linesOfCode": 9
+    },
+    "client/src/main.tsx": {
+      "hash": "9253237bf46cc3e63e8f41eeb1dcede2a0620730105f643849ef31a2d2bb113b",
+      "compliance": 95,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-05",
+          "description": "Missing TypeScript types/interfaces",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "client/src/main.tsx"
+        }
+      ],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:35:46.064602Z",
+      "linesOfCode": 9
+    },
+    "client/tsconfig.json": {
+      "hash": "63a85d1d826a750adf97d8b069f1331cf3c978afc7573d0a15a36929f2fa09b1",
+      "compliance": 100,
+      "violations": [],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:35:46.710880Z",
+      "linesOfCode": 26
+    },
+    "client/vite.config.ts": {
+      "hash": "825bba7f68f5cfa0b48d71b97bea4f5c662868cfb3916e5e4db7323837bc0671",
+      "compliance": 95,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-05",
+          "description": "Missing TypeScript types/interfaces",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "client/vite.config.ts"
+        }
+      ],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:35:47.139430Z",
+      "linesOfCode": 14
+    },
+    "init-scripts/01-schema.js": {
+      "hash": "b1f32f0012d6b95dcae7f930c92b21fc66093d0fe77ee681ea106493e921048f",
+      "compliance": 100,
+      "violations": [],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:35:47.536875Z",
+      "linesOfCode": 17
+    },
+    "mcp-server/mcp-bridge.js": {
+      "hash": "14db5318e6df208889ce92012c6318fb9fbfeecbbc4eacbddb46d117b2a3f6ad",
+      "compliance": 100,
+      "violations": [],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:35:47.950473Z",
+      "linesOfCode": 1310
+    },
+    "mcp-server/mcp-config.json": {
+      "hash": "80a359e411ab4af7da84294d6fba5e6349461f1bbd6598805fbc76f2cb1ee290",
+      "compliance": 100,
+      "violations": [],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:35:48.219893Z",
+      "linesOfCode": 19
+    },
+    "mcp-server/templates/test-config.json": {
+      "hash": "c0f49357d57e2a54073b73b12fe9169e0d182bc771cba820a19128a83b2ac196",
+      "compliance": 100,
+      "violations": [],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:35:48.533471Z",
+      "linesOfCode": 166
+    },
+    "scripts/fake_crm.py": {
+      "hash": "c5e4abc2bc0787860b538a3c3725bc62e503d095594125f052aeb3e4fa90bb83",
+      "compliance": 72,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-12",
+          "description": "Potential hardcoded secrets detected",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "scripts/fake_crm.py"
+        },
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-07",
+          "description": "Missing Docstrings for public functions",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "scripts/fake_crm.py"
+        }
+      ],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:35:48.919930Z",
+      "linesOfCode": 156
+    },
+    "server/app/agents/__init__.py": {
+      "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "compliance": 95,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-05",
+          "description": "Missing Python type hints",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/app/agents/__init__.py"
+        }
+      ],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:35:49.313478Z",
+      "linesOfCode": 0
+    },
+    "server/app/agents/extraction.py": {
+      "hash": "46d20004e2e1a1dd37047d7c9e9fddcb534e48ee9ef96592dc0b57c1c77d133b",
+      "compliance": 97,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-07",
+          "description": "Missing Docstrings for public functions",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/app/agents/extraction.py"
+        }
+      ],
+      "standards_version": "sha256:7cf517c6c97eb3c02613c89ab9ab90c84e2a2020608d1abb82ce6a55ba803f62",
+      "custom_violations": [],
+      "timestamp": "2026-04-20T04:46:44.375189Z",
+      "linesOfCode": 227
+    },
+    "server/app/agents/heartbeat.py": {
+      "hash": "64b1fe376488caf05c7a633d6887e8f8dd71ecf24cd2aab85943bcbd75fc288e",
+      "compliance": 97,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-07",
+          "description": "Missing Docstrings for public functions",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/app/agents/heartbeat.py"
+        }
+      ],
+      "standards_version": "sha256:7cf517c6c97eb3c02613c89ab9ab90c84e2a2020608d1abb82ce6a55ba803f62",
+      "custom_violations": [],
+      "timestamp": "2026-04-20T04:00:46.344381Z",
+      "linesOfCode": 194
+    },
+    "server/app/agents/hygiene.py": {
+      "hash": "02b562c2ad7d062a2e00c17de6588529f055158d6567b70f14ae776c9a04db70",
+      "compliance": 100,
+      "violations": [],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:35:50.399434Z",
+      "linesOfCode": 124
+    },
+    "server/app/agents/sender.py": {
+      "hash": "6f44602d0bae54371234ef47c3aa06690a721ed5e1de662c02fef79a2f0a48ca",
+      "compliance": 97,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-07",
+          "description": "Missing Docstrings for public functions",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/app/agents/sender.py"
+        }
+      ],
+      "standards_version": "sha256:7cf517c6c97eb3c02613c89ab9ab90c84e2a2020608d1abb82ce6a55ba803f62",
+      "custom_violations": [],
+      "timestamp": "2026-04-20T04:30:24.195382Z",
+      "linesOfCode": 290
+    },
+    "server/app/agents/supervisor.py": {
+      "hash": "9fe1a2690f66185c658cc7892a93d3c9e2960209ab85fe7f520a881be2ba4ab8",
+      "compliance": 100,
+      "violations": [],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:35:51.152141Z",
+      "linesOfCode": 116
+    },
+    "server/app/api/__init__.py": {
+      "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "compliance": 95,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-05",
+          "description": "Missing Python type hints",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/app/api/__init__.py"
+        }
+      ],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:35:51.534037Z",
+      "linesOfCode": 0
+    },
+    "server/app/api/deps.py": {
+      "hash": "aacb6955ba88d92258e91b1d826f75043ef59ae84ffa51fabe89938b79bb7022",
+      "compliance": 87,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-06",
+          "description": "Missing try/except error handling",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/app/api/deps.py"
+        },
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-07",
+          "description": "Missing Docstrings for public functions",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/app/api/deps.py"
+        }
+      ],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:35:51.995848Z",
+      "linesOfCode": 35
+    },
+    "server/app/api/v1/__init__.py": {
+      "hash": "2bc38025ea4086d67e7a886557bcde1b482feef4c9e6118a0aefe961a4fe26b7",
+      "compliance": 95,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-05",
+          "description": "Missing Python type hints",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/app/api/v1/__init__.py"
+        }
+      ],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:35:52.422444Z",
+      "linesOfCode": 6
+    },
+    "server/app/api/v1/endpoints/__init__.py": {
+      "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "compliance": 95,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-05",
+          "description": "Missing Python type hints",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/app/api/v1/endpoints/__init__.py"
+        }
+      ],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:35:52.844844Z",
+      "linesOfCode": 0
+    },
+    "server/app/api/v1/endpoints/admin.py": {
+      "hash": "87cb5aa893ccb8e83eb680baa1de7ce79cc4d54c07e71548db6e9745e8a5ec0d",
+      "compliance": 90,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-06",
+          "description": "Missing try/except error handling",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/app/api/v1/endpoints/admin.py"
+        }
+      ],
+      "standards_version": "sha256:7cf517c6c97eb3c02613c89ab9ab90c84e2a2020608d1abb82ce6a55ba803f62",
+      "custom_violations": [],
+      "timestamp": "2026-04-20T00:58:21.151471Z",
+      "linesOfCode": 49
+    },
+    "server/app/api/v1/endpoints/bootstrap.py": {
+      "hash": "9e50976aff4e2a86fbb045abb44f08348088b342d8b064d22a38ae7d0321ca68",
+      "compliance": 90,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-06",
+          "description": "Missing try/except error handling",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/app/api/v1/endpoints/bootstrap.py"
+        }
+      ],
+      "standards_version": "sha256:7cf517c6c97eb3c02613c89ab9ab90c84e2a2020608d1abb82ce6a55ba803f62",
+      "custom_violations": [],
+      "timestamp": "2026-04-20T00:58:21.564250Z",
+      "linesOfCode": 43
+    },
+    "server/app/api/v1/endpoints/contacts_callback.py": {
+      "hash": "d5b9155ea841eb66f1cca49d4070af84ee956691f18c3602cb7285d050f11fa3",
+      "compliance": 87,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-06",
+          "description": "Missing try/except error handling",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/app/api/v1/endpoints/contacts_callback.py"
+        },
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-07",
+          "description": "Missing Docstrings for public functions",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/app/api/v1/endpoints/contacts_callback.py"
+        }
+      ],
+      "standards_version": "sha256:7cf517c6c97eb3c02613c89ab9ab90c84e2a2020608d1abb82ce6a55ba803f62",
+      "custom_violations": [],
+      "timestamp": "2026-04-20T00:58:21.952880Z",
+      "linesOfCode": 87
+    },
+    "server/app/api/v1/endpoints/health.py": {
+      "hash": "2cee0649772991b3d081b9b56e4be4a44d42b06a811f3a20f1bc37a31cee1efc",
+      "compliance": 90,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-06",
+          "description": "Missing try/except error handling",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/app/api/v1/endpoints/health.py"
+        }
+      ],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:35:54.424248Z",
+      "linesOfCode": 29
+    },
+    "server/app/core/config.py": {
+      "hash": "21b4967d3c7235543894492a54860db2dc8dc5dba63000359ccceb7f7fa418c1",
+      "compliance": 100,
+      "violations": [],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:35:54.832221Z",
+      "linesOfCode": 40
+    },
+    "server/app/core/errors.py": {
+      "hash": "758aac29e2ea106bd976372610c877098e11778f3a0a7f2dc08dac0d4256e604",
+      "compliance": 87,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-06",
+          "description": "Missing try/except error handling",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/app/core/errors.py"
+        },
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-07",
+          "description": "Missing Docstrings for public functions",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/app/core/errors.py"
+        }
+      ],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:35:55.294742Z",
+      "linesOfCode": 56
+    },
+    "server/app/core/hmac_signing.py": {
+      "hash": "e467bd52549a26c6aa773dd407beb1b68b69f89a66bee285143cb79e79fa9fcb",
+      "compliance": 97,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-07",
+          "description": "Missing Docstrings for public functions",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/app/core/hmac_signing.py"
+        }
+      ],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:35:55.687912Z",
+      "linesOfCode": 76
+    },
+    "server/app/core/logging.py": {
+      "hash": "03dcb67dc813f754c4d16d97d5ce39e4da29cf3c6203053f149a55a45d98c306",
+      "compliance": 97,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-07",
+          "description": "Missing Docstrings for public functions",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/app/core/logging.py"
+        }
+      ],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:35:56.092654Z",
+      "linesOfCode": 65
+    },
+    "server/app/core/metrics.py": {
+      "hash": "273079a2672638b9b35f9b840f97195ba1ddd10ae599533333feb20a8a365f03",
+      "compliance": 97,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-07",
+          "description": "Missing Docstrings for public functions",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/app/core/metrics.py"
+        }
+      ],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:35:56.522060Z",
+      "linesOfCode": 42
+    },
+    "server/app/core/runtime_config.py": {
+      "hash": "b7bc033d41a6f807aec4b1cf5a5f4efbcdf76356a6744a41ac86f221f3e5f7f8",
+      "compliance": 90,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-06",
+          "description": "Missing try/except error handling",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/app/core/runtime_config.py"
+        }
+      ],
+      "standards_version": "sha256:7cf517c6c97eb3c02613c89ab9ab90c84e2a2020608d1abb82ce6a55ba803f62",
+      "custom_violations": [],
+      "timestamp": "2026-04-20T02:20:07.170670Z",
+      "linesOfCode": 79
+    },
+    "server/app/db/__init__.py": {
+      "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "compliance": 95,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-05",
+          "description": "Missing Python type hints",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/app/db/__init__.py"
+        }
+      ],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:35:57.407867Z",
+      "linesOfCode": 0
+    },
+    "server/app/db/mongodb.py": {
+      "hash": "6440f2d06077a1d96d071f6105e33bc5d91257e4a7de44821e384cb275d03a0f",
+      "compliance": 87,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-06",
+          "description": "Missing try/except error handling",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/app/db/mongodb.py"
+        },
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-07",
+          "description": "Missing Docstrings for public functions",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/app/db/mongodb.py"
+        }
+      ],
+      "standards_version": "sha256:7cf517c6c97eb3c02613c89ab9ab90c84e2a2020608d1abb82ce6a55ba803f62",
+      "custom_violations": [],
+      "timestamp": "2026-04-20T04:09:19.014596Z",
+      "linesOfCode": 143
+    },
+    "server/app/entrypoint.py": {
+      "hash": "95fbe494b86ab86c65f93846232e8cb4e151ff8cca75f498b0c7106de5d3128b",
+      "compliance": 97,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-07",
+          "description": "Missing Docstrings for public functions",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/app/entrypoint.py"
+        }
+      ],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:35:58.267629Z",
+      "linesOfCode": 20
+    },
+    "server/app/main.py": {
+      "hash": "d4d4417b8076b19c57704bfd50a858c67e777903bab60e068bb001f90a0a60f2",
+      "compliance": 97,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-07",
+          "description": "Missing Docstrings for public functions",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/app/main.py"
+        }
+      ],
+      "standards_version": "sha256:7cf517c6c97eb3c02613c89ab9ab90c84e2a2020608d1abb82ce6a55ba803f62",
+      "custom_violations": [],
+      "timestamp": "2026-04-20T04:30:24.666548Z",
+      "linesOfCode": 199
+    },
+    "server/app/models/__init__.py": {
+      "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "compliance": 95,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-05",
+          "description": "Missing Python type hints",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/app/models/__init__.py"
+        }
+      ],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:35:59.064994Z",
+      "linesOfCode": 0
+    },
+    "server/app/schemas/__init__.py": {
+      "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "compliance": 95,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-05",
+          "description": "Missing Python type hints",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/app/schemas/__init__.py"
+        }
+      ],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:35:59.454925Z",
+      "linesOfCode": 0
+    },
+    "server/app/schemas/bootstrap.py": {
+      "hash": "749c1afcd54e18129b710791bbc128ea83e8b30ce6a52f9663abf4e02a507811",
+      "compliance": 100,
+      "violations": [],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:35:59.866024Z",
+      "linesOfCode": 18
+    },
+    "server/app/services/__init__.py": {
+      "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "compliance": 95,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-05",
+          "description": "Missing Python type hints",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/app/services/__init__.py"
+        }
+      ],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:36:00.273137Z",
+      "linesOfCode": 0
+    },
+    "server/app/services/contact_parser.py": {
+      "hash": "70efd574faf637c5694b730ca1e12ba985161c3fedfc59eeb9be3272bcd912d5",
+      "compliance": 97,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-07",
+          "description": "Missing Docstrings for public functions",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/app/services/contact_parser.py"
+        }
+      ],
+      "standards_version": "sha256:7cf517c6c97eb3c02613c89ab9ab90c84e2a2020608d1abb82ce6a55ba803f62",
+      "custom_violations": [],
+      "timestamp": "2026-04-20T04:09:19.458009Z",
+      "linesOfCode": 119
+    },
+    "server/app/services/email_sender.py": {
+      "hash": "d6f2d541d64622a213bf8c1e260c26a1afa6597b0be5d2195f9d5f66b12c2c07",
+      "compliance": 100,
+      "violations": [],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:36:00.984591Z",
+      "linesOfCode": 128
+    },
+    "server/app/services/leadpulse_client.py": {
+      "hash": "684eb1a6601a17cb48a9846f10ddc5463ea015f737df4011bb0e3e6051a5dfce",
+      "compliance": 97,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-07",
+          "description": "Missing Docstrings for public functions",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/app/services/leadpulse_client.py"
+        }
+      ],
+      "standards_version": "sha256:7cf517c6c97eb3c02613c89ab9ab90c84e2a2020608d1abb82ce6a55ba803f62",
+      "custom_violations": [],
+      "timestamp": "2026-04-20T04:30:25.094134Z",
+      "linesOfCode": 398
+    },
+    "server/app/services/lease_service.py": {
+      "hash": "d7ab9fb6045833ab42a6eb7ffac652133bdb858e7467f7ff7e126c8051769aa0",
+      "compliance": 97,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-07",
+          "description": "Missing Docstrings for public functions",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/app/services/lease_service.py"
+        }
+      ],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:36:01.792906Z",
+      "linesOfCode": 102
+    },
+    "server/app/services/pending_crm_events.py": {
+      "hash": "72afd1ac5245e6e6f4f25dfb357e5b7758fa3062c8fd5af72e7171a26fb5d04d",
+      "compliance": 100,
+      "violations": [],
+      "standards_version": "sha256:7cf517c6c97eb3c02613c89ab9ab90c84e2a2020608d1abb82ce6a55ba803f62",
+      "custom_violations": [],
+      "timestamp": "2026-04-20T04:00:47.233758Z",
+      "linesOfCode": 59
+    },
+    "server/app/services/refined_contacts_service.py": {
+      "hash": "a0d0665d7a13aeb03014a6497813b53c550378effed4529c1c947dc487951595",
+      "compliance": 97,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-07",
+          "description": "Missing Docstrings for public functions",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/app/services/refined_contacts_service.py"
+        }
+      ],
+      "standards_version": "sha256:7cf517c6c97eb3c02613c89ab9ab90c84e2a2020608d1abb82ce6a55ba803f62",
+      "custom_violations": [],
+      "timestamp": "2026-04-20T03:42:38.234298Z",
+      "linesOfCode": 253
+    },
+    "server/app/services/runtime_probe.py": {
+      "hash": "aabce0ff1ffb246aeebd68a7ab72f796283e79e796d15f90bba6e58be522910c",
+      "compliance": 97,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-07",
+          "description": "Missing Docstrings for public functions",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/app/services/runtime_probe.py"
+        }
+      ],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:36:02.927489Z",
+      "linesOfCode": 114
+    },
+    "server/app/services/send_queue_service.py": {
+      "hash": "ed06e1f10278b7b748b3333658d04257923807f893076348d47e0eda9da30bb7",
+      "compliance": 87,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-06",
+          "description": "Missing try/except error handling",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/app/services/send_queue_service.py"
+        },
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-07",
+          "description": "Missing Docstrings for public functions",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/app/services/send_queue_service.py"
+        }
+      ],
+      "standards_version": "sha256:7cf517c6c97eb3c02613c89ab9ab90c84e2a2020608d1abb82ce6a55ba803f62",
+      "custom_violations": [],
+      "timestamp": "2026-04-20T03:42:38.668943Z",
+      "linesOfCode": 169
+    },
+    "server/app/services/template_renderer.py": {
+      "hash": "dc7c7784d9c3e351262a0ed4475cc198e061c900eff723c9fb98c097fc51588a",
+      "compliance": 97,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-07",
+          "description": "Missing Docstrings for public functions",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/app/services/template_renderer.py"
+        }
+      ],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:36:03.657392Z",
+      "linesOfCode": 64
+    },
+    "server/app/services/throttle_service.py": {
+      "hash": "d0f9c49f033160e40230c31f3e0c91b9c72e327baf42ce1de1a080fdeab97b15",
+      "compliance": 87,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-06",
+          "description": "Missing try/except error handling",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/app/services/throttle_service.py"
+        },
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-07",
+          "description": "Missing Docstrings for public functions",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/app/services/throttle_service.py"
+        }
+      ],
+      "standards_version": "sha256:7cf517c6c97eb3c02613c89ab9ab90c84e2a2020608d1abb82ce6a55ba803f62",
+      "custom_violations": [],
+      "timestamp": "2026-04-20T04:09:19.834379Z",
+      "linesOfCode": 241
+    },
+    "server/tests/__init__.py": {
+      "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "compliance": 95,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-05",
+          "description": "Missing Python type hints",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/tests/__init__.py"
+        }
+      ],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:36:04.385222Z",
+      "linesOfCode": 0
+    },
+    "server/tests/test_contact_parser.py": {
+      "hash": "13bbd304ec56ee9364f293a16de101ace18458818fc773c622353d1a6f7aca72",
+      "compliance": 97,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-07",
+          "description": "Missing Docstrings for public functions",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/tests/test_contact_parser.py"
+        }
+      ],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:36:04.811839Z",
+      "linesOfCode": 22
+    },
+    "server/tests/test_hmac_signing.py": {
+      "hash": "98427c928b2665f9e3a77d0618e0dbdd8fb18d5abd052653e5c118d21c1478c7",
+      "compliance": 97,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-07",
+          "description": "Missing Docstrings for public functions",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/tests/test_hmac_signing.py"
+        }
+      ],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:36:05.233881Z",
+      "linesOfCode": 48
+    },
+    "server/tests/test_leadpulse_client_token_refresh.py": {
+      "hash": "21b33e7cff883cc162cfabf0c7f8b8e0fcc0417006aafa035ca7f45033d57f3c",
+      "compliance": 87,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-06",
+          "description": "Missing try/except error handling",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/tests/test_leadpulse_client_token_refresh.py"
+        },
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-07",
+          "description": "Missing Docstrings for public functions",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/tests/test_leadpulse_client_token_refresh.py"
+        }
+      ],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:36:05.672458Z",
+      "linesOfCode": 29
+    },
+    "server/tests/test_sender_cache_contract.py": {
+      "hash": "c787f27b2b8baf88d766773d8d45d6a5a8cf2253770ddd6009d4a2561ecb2681",
+      "compliance": 90,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-06",
+          "description": "Missing try/except error handling",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/tests/test_sender_cache_contract.py"
+        }
+      ],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:36:06.056532Z",
+      "linesOfCode": 97
+    },
+    "server/tests/test_template_renderer.py": {
+      "hash": "93d9e77e1046667d56c0eda1b450e321a2a53a38dd24c22d9e2a903bb74a9661",
+      "compliance": 97,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-07",
+          "description": "Missing Docstrings for public functions",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/tests/test_template_renderer.py"
+        }
+      ],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:36:06.475764Z",
+      "linesOfCode": 26
+    },
+    "tests/api_definitions/admin/live-stats-get.json": {
+      "hash": "73bb9dfc091d552cd750725a0affeeacee641a2c9e0609b8312083ab0b08f84b",
+      "compliance": 100,
+      "violations": [],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:36:06.752465Z",
+      "linesOfCode": 12
+    },
+    "tests/api_definitions/admin/scale-hint-post.json": {
+      "hash": "20278bfd2f5be97f286cfc6ba2abc8b7be7793eaeda235bfe1e0c91beb2567f4",
+      "compliance": 100,
+      "violations": [],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:36:07.086659Z",
+      "linesOfCode": 12
+    },
+    "tests/api_definitions/bootstrap/bootstrap-post.json": {
+      "hash": "b8f47081e94a0d5f6ac5a741f5ac228bd3657d707cd4f80a201d8f6997caf347",
+      "compliance": 100,
+      "violations": [],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:36:07.436689Z",
+      "linesOfCode": 35
+    },
+    "tests/api_definitions/contacts-callback/lookup-get.json": {
+      "hash": "02ae4b420ce93991ebbdf6d5e66998f77c7f40259abbbad9509ad46f87107ceb",
+      "compliance": 100,
+      "violations": [],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:36:07.773702Z",
+      "linesOfCode": 12
+    },
+    "tests/api_definitions/contacts-callback/mark-converted-post.json": {
+      "hash": "dac59218e96853ba18bc087c267a1bd5c401609e31951cc883ae1b841398e1fe",
+      "compliance": 100,
+      "violations": [],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:36:08.118649Z",
+      "linesOfCode": 12
+    },
+    "tests/api_definitions/contacts-callback/mark-unsubscribed-post.json": {
+      "hash": "40e382be7c166b56e47ecd9a98a5fcd087ff468cd02ea990a37f59433f124209",
+      "compliance": 100,
+      "violations": [],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-19T22:36:08.451296Z",
+      "linesOfCode": 12
+    },
+    "server/app/services/tenant_quotas.py": {
+      "hash": "fc28211d554a9600fbfe0ef2d7cc93d94c451607ea5637aad9a1895cbc41eb8a",
+      "compliance": 100,
+      "violations": [],
+      "standards_version": "sha256:7cf517c6c97eb3c02613c89ab9ab90c84e2a2020608d1abb82ce6a55ba803f62",
+      "custom_violations": [],
+      "timestamp": "2026-04-20T04:30:25.498555Z",
+      "linesOfCode": 80
+    },
+    "server/tests/test_scheduling_tz.py": {
+      "hash": "883e00527bc376c52ab042c4c6550e34d0fcdb73bb5ef4220fb6077c3cd81538",
+      "compliance": 97,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-07",
+          "description": "Missing Docstrings for public functions",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/tests/test_scheduling_tz.py"
+        }
+      ],
+      "standards_version": "sha256:7cf517c6c97eb3c02613c89ab9ab90c84e2a2020608d1abb82ce6a55ba803f62",
+      "custom_violations": [],
+      "timestamp": "2026-04-20T04:46:44.876153Z",
+      "linesOfCode": 95
+    },
+    "server/tests/test_shard_key.py": {
+      "hash": "b278c48d898464556ea1a523524fd61553268e64d8ba58b38b804d4dc92f59f3",
+      "compliance": 97,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-07",
+          "description": "Missing Docstrings for public functions",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/tests/test_shard_key.py"
+        }
+      ],
+      "standards_version": "sha256:7cf517c6c97eb3c02613c89ab9ab90c84e2a2020608d1abb82ce6a55ba803f62",
+      "custom_violations": [],
+      "timestamp": "2026-04-20T04:46:45.367769Z",
+      "linesOfCode": 13
+    },
+    "server/tests/test_tenant_quotas.py": {
+      "hash": "5a45a6065e8f5830095ebef97626ec82c2e3b842dc6ddcb6e0162b42de5962a9",
+      "compliance": 90,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-06",
+          "description": "Missing try/except error handling",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/tests/test_tenant_quotas.py"
+        }
+      ],
+      "standards_version": "sha256:7cf517c6c97eb3c02613c89ab9ab90c84e2a2020608d1abb82ce6a55ba803f62",
+      "custom_violations": [],
+      "timestamp": "2026-04-20T04:46:45.814298Z",
+      "linesOfCode": 60
+    },
+    "server/tests/test_backpressure.py": {
+      "hash": "1baf63dd8c650ad55300573dbdaa425416e51b02f33dcee8408b6ea214fd62c0",
+      "compliance": 87,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-06",
+          "description": "Missing try/except error handling",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/tests/test_backpressure.py"
+        },
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-07",
+          "description": "Missing Docstrings for public functions",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/tests/test_backpressure.py"
+        }
+      ],
+      "standards_version": "sha256:7cf517c6c97eb3c02613c89ab9ab90c84e2a2020608d1abb82ce6a55ba803f62",
+      "custom_violations": [],
+      "timestamp": "2026-04-20T04:53:02.108575Z",
+      "linesOfCode": 28
+    },
+    "server/tests/test_tenant_fair_lease.py": {
+      "hash": "09d4960de94a7636def4953ccb2197fa262e255145a4789c5cf48d6ae8311147",
+      "compliance": 87,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-06",
+          "description": "Missing try/except error handling",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/tests/test_tenant_fair_lease.py"
+        },
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-07",
+          "description": "Missing Docstrings for public functions",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/tests/test_tenant_fair_lease.py"
+        }
+      ],
+      "standards_version": "sha256:7cf517c6c97eb3c02613c89ab9ab90c84e2a2020608d1abb82ce6a55ba803f62",
+      "custom_violations": [],
+      "timestamp": "2026-04-20T04:53:02.520050Z",
+      "linesOfCode": 97
+    }
+  },
+  "registered_apis": {}
+}

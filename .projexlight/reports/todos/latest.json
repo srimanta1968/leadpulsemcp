@@ -1,0 +1,21 @@
+{
+  "reportType": "todos",
+  "timestamp": "2026-04-19T22:36:18Z",
+  "status": "pending",
+  "priority": "end-of-sprint",
+  "summary": {
+    "total": 1,
+    "api_related": 0,
+    "general": 1
+  },
+  "items": [
+    {
+      "file": "server/app/agents/hygiene.py",
+      "line": 93,
+      "content": "         # TODO-integration: call ZeroBounce / NeverBounce here.",
+      "priority": "normal",
+      "category": "general"
+    }
+  ],
+  "llm_prompt": "The following TODO items were found in the codebase. These should be addressed before the end of the sprint:\n\n## High Priority - API/Mock TODOs (0)\nThese indicate missing API integrations or temporary mocks:\n\n\n\n## Normal Priority - General TODOs (1)\n\n- server/app/agents/hygiene.py:93:         # TODO-integration: call ZeroBounce / NeverBounce here.\n\n## Actions\n1. For API TODOs: Check if the required API is now available using `projexlight_search_apis`\n2. Replace mocks with actual API calls\n3. Address remaining TODOs before sprint completion"
+}

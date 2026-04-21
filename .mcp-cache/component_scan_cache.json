@@ -1,0 +1,29 @@
+{
+  "scans": [
+    {
+      "scanId": "1e7f00f6-fd71-41dc-bdf7-163321a78365",
+      "timestamp": "2026-04-19T22:37:15.917170",
+      "duplicatesFound": 0
+    },
+    {
+      "scanId": "fa6328d1-af21-4af2-b218-3f96ff93d92e",
+      "timestamp": "2026-04-20T04:57:22.676868",
+      "duplicatesFound": 0
+    },
+    {
+      "scanId": "b509be14-a681-488e-a45d-f449f40609de",
+      "timestamp": "2026-04-20T16:38:51.531597",
+      "duplicatesFound": 0
+    },
+    {
+      "scanId": "a62104b0-c305-4038-8087-0ee737b817c0",
+      "timestamp": "2026-04-20T16:40:29.014361",
+      "duplicatesFound": 0
+    },
+    {
+      "scanId": "2b604fe4-7f16-40df-a9fb-ee893bf343fa",
+      "timestamp": "2026-04-21T02:50:30.868344",
+      "duplicatesFound": 0
+    }
+  ]
+}

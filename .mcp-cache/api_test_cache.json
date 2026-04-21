@@ -1,0 +1,29 @@
+{
+  "last_test_run": "2026-04-21T02:50:11.470161",
+  "tested_apis": {
+    "POST:/api/v1/bootstrap": {
+      "lastTested": "2026-04-21T02:50:11.470198",
+      "fileHash": null
+    },
+    "GET:/api/v1/contacts/lookup": {
+      "lastTested": "2026-04-21T02:50:11.470200",
+      "fileHash": null
+    },
+    "POST:/api/v1/contacts/mark-converted": {
+      "lastTested": "2026-04-21T02:50:11.470202",
+      "fileHash": null
+    },
+    "POST:/api/v1/contacts/mark-unsubscribed": {
+      "lastTested": "2026-04-21T02:50:11.470203",
+      "fileHash": null
+    },
+    "POST:/api/v1/admin/scale-hint": {
+      "lastTested": "2026-04-21T02:50:11.470196",
+      "fileHash": null
+    },
+    "GET:/api/v1/admin/live-stats/:campaign_id": {
+      "lastTested": "2026-04-21T02:50:11.470191",
+      "fileHash": null
+    }
+  }
+}

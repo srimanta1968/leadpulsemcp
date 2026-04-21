@@ -1,0 +1,42 @@
+{
+  "sessionToken": "WDnm//ZKbfu7Wb9iqFiTaIcY6d9fWOsHz/NJ2C1vET59AjqBNNmTNMvtz3qKSQ5pBEpOUZ4kES/MXoRuvWd1kkqMNytNomiSZsoFwLVQoUhK8YUNc1wQirFOIOimLJIhy5bbNiqK3apiZbcm44tBVvPMVRZuzPPp1mOYHOi+/eSwJ6ucxhoBLXBXNlOLsaFbLij/Xc6EYzIrzf1ifw==",
+  "projectId": "6f3a50a3-8701-42ae-b1c5-aa6e8a4ad0d8",
+  "projectPath": "/c/Users/srima/projex_verticals/LeadPulseMcp",
+  "features": [
+    {
+      "temp_id": "f-mt-scheduling",
+      "epic_temp_id": "epic-mcp-runtime",
+      "title": "Multi-tenant fair scheduling",
+      "description": "Add global tenant round-robin to send_queue.lease_batch so no single tenant starves others in a shared pool. Includes tenant_user_id on every queue row, per-tenant daily cap enforcement in throttle_service, and a pre-send campaign-status sync-check in the sender agent. Replaces the single-tenant lease pattern that currently sorts only by scheduled_for."
+    },
+    {
+      "temp_id": "f-self-config",
+      "epic_temp_id": "epic-mcp-runtime",
+      "title": "Container self-configuration by size",
+      "description": "Containers read CPU_VCPU and RAM_MB env vars at boot and auto-configure sender_agents and extraction_agents from a shared allocation formula. Reports the chosen allocation to CRM in the register and heartbeat payloads so the admin dashboard can show exactly what each container is doing. Enables mixed-size fleets and 1 CPU / 1GB defaults."
+    },
+    {
+      "temp_id": "f-active-work-polling",
+      "epic_temp_id": "epic-mcp-crm-comm",
+      "title": "Active-work polling + tenant quotas",
+      "description": "Replace the single-tenant /api/mcp/campaigns?since poll with a tenant-aware /api/mcp/active-work?since that returns all running campaigns across tenants the pool serves. Add /api/mcp/tenant-quotas polled every 15 minutes for per-tenant daily caps and plan-tier limits. Drops the legacy pool_id parameter."
+    },
+    {
+      "temp_id": "f-rich-heartbeat",
+      "epic_temp_id": "epic-mcp-platform",
+      "title": "Rich heartbeat for fleet observability",
+      "description": "Extend heartbeat payload so mcp_worker_instances in the CRM reflects true container state: size (cpu/ram), started_at, uptime, sender/extraction agent counts active, per-tenant backlog counters, extraction_queue_depth, and current campaigns-in-flight list. Powers the Container Fleet Dashboard's live panel."
+    },
+    {
+      "temp_id": "f-shard-key",
+      "epic_temp_id": "epic-mcp-platform",
+      "title": "Mongo shard-key predeclaration and streaming ingest",
+      "description": "Add shard_key = sha256(tenant_user_id)[:16] to every multi-tenant collection write (send_queue, campaign_contacts, refined_contacts, campaign_stats). Include shard_key prefix in compound indexes. Switch JSON file parsing to ijson streaming so 500MB files do not OOM a small container. Future-proofs Year-2+ sharding with zero backfill."
+    }
+  ],
+  "epic_id_mapping": {
+    "epic-mcp-runtime": "cf82e40d-b86b-4609-9fcb-f608b6b96af9",
+    "epic-mcp-crm-comm": "894a5b9c-06f2-4c0f-aaaa-7da7a7f86cbc",
+    "epic-mcp-platform": "8d5d6ba0-4dcf-47a0-b1a8-4ad117c11e7f"
+  }
+}

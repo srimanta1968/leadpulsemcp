@@ -1,0 +1,9 @@
+{
+  "server_port": 8000,
+  "server_host": "host.docker.internal",
+  "health_endpoint": "/health",
+  "base_url": "http://host.docker.internal:8000",
+  "auto_synced": true,
+  "sync_timestamp": "2026-04-19T22:37:10.599054Z",
+  "sync_source": "canonical_app_port"
+}

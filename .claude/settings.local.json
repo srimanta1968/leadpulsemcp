@@ -8,7 +8,13 @@
       "Bash(curl -s -X POST http://localhost:8766/api/epics/list -H 'Content-Type: application/json' -d '{\"sessionToken\":\"IrC2YQQHfDLp8T/uySDJY0otA51DGhFkbf5WPnqDg3FePWYyzYiuqGYfvgVzP1WRc67Pjer0PFGKgQZ+cfac1hBJRoUVp83j6N83Z82M4vjrcaHlgpAfAXd1fZlhGoeX3WApz/+AvsQBUdi+5ciYbadnfGY3WPUAgA5xCV0Qku6Zb/Ab9bn5BI095y3//RZNriX2mrPRh08qBtSsmQ==\",\"projectId\":\"6c0fc1d6-5174-498b-a0c6-eb0498b3f92c\",\"projectPath\":\"/c/Users/srima/projex_crm\"}')",
       "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(json.dumps\\([{'id':e['id'],'title':e['title']} for e in d.get\\('data',{}\\).get\\('items',[]\\) if e.get\\('project_id'\\)==r'6c0fc1d6-5174-498b-a0c6-eb0498b3f92c'], indent=2\\)\\)\")",
       "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(json.dumps\\([{'id':f['id'],'title':f['title']} for f in d.get\\('data',{}\\).get\\('items',[]\\)], indent=2\\)\\)\")",
-      "Bash(curl *)"
+      "Bash(curl *)",
+      "Bash(git add *)",
+      "Bash(git commit -m 'Task: [TEST-DATA] governance-tracked comments for 6 CRM APIs *)",
+      "Bash(python *)",
+      "Bash(git commit -m 'Task: tenant_user_id in send_queue/campaign_stats writes + compound indexes *)",
+      "Bash(git commit -m 'TK-2667: apply campaign timezone to _compute_scheduled_for *)",
+      "Bash(git commit -m 'TK-2669: per-hour throttle cap wired into sender *)"
     ]
   },
   "enableAllProjectMcpServers": true,

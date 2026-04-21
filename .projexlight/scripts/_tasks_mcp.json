@@ -1,0 +1,217 @@
+{
+  "sessionToken": "WDnm//ZKbfu7Wb9iqFiTaIcY6d9fWOsHz/NJ2C1vET59AjqBNNmTNMvtz3qKSQ5pBEpOUZ4kES/MXoRuvWd1kkqMNytNomiSZsoFwLVQoUhK8YUNc1wQirFOIOimLJIhy5bbNiqK3apiZbcm44tBVvPMVRZuzPPp1mOYHOi+/eSwJ6ucxhoBLXBXNlOLsaFbLij/Xc6EYzIrzf1ifw==",
+  "projectId": "6f3a50a3-8701-42ae-b1c5-aa6e8a4ad0d8",
+  "projectPath": "/c/Users/srima/projex_verticals/LeadPulseMcp",
+  "tasks": [
+    {
+      "title": "Add tenant_user_id field to send_queue docs and indexes",
+      "description": "Extend send_queue, campaign_contacts, refined_contacts, campaign_stats schemas so every document carries tenant_user_id. Update indexes in server/app/db/mongodb.py to use (tenant_user_id, status, scheduled_for) compound where relevant. Backfill plan: drop-and-recreate acceptable since MCP Mongo is currently single-tenant test data.",
+      "task_type": "database",
+      "feature_id": "3c41cadf-dcac-4140-a667-5b6da799f274",
+      "epic_id": "cf82e40d-b86b-4609-9fcb-f608b6b96af9",
+      "sprint_id": "7f503ef9-3bf1-4ce9-b055-9f4824e676a1",
+      "priority": "critical",
+      "acceptance_criteria": [
+        "Every insert to send_queue, campaign_contacts, refined_contacts, campaign_stats includes tenant_user_id",
+        "Compound index (tenant_user_id, status, scheduled_for) exists on send_queue",
+        "Queries that were single-tenant now filter by tenant_user_id explicitly"
+      ]
+    },
+    {
+      "title": "Create global tenant_cursors collection for round-robin",
+      "description": "New Mongo collection tenant_cursors holding one document {_id: 'global', last_tenant_id, last_picked_at}. lease_batch atomically advances the cursor via findOneAndUpdate to pick the next tenant. Handle empty-tenant and wrap-around cases. Add sweeper to evict cursor if no activity for 5 min.",
+      "task_type": "service",
+      "feature_id": "3c41cadf-dcac-4140-a667-5b6da799f274",
+      "epic_id": "cf82e40d-b86b-4609-9fcb-f608b6b96af9",
+      "sprint_id": "7f503ef9-3bf1-4ce9-b055-9f4824e676a1",
+      "priority": "critical",
+      "acceptance_criteria": [
+        "tenant_cursors collection created with single _id:global document",
+        "Atomic findOneAndUpdate used to advance cursor",
+        "Cursor wraps around when reaching end of tenant list"
+      ]
+    },
+    {
+      "title": "Refactor send_queue_service.lease_batch to tenant-fair selection",
+      "description": "Replace current lease_batch in server/app/services/send_queue_service.py (lines 56-90). New flow: read next tenant from tenant_cursors, find up to BATCH_SIZE=8 pending docs for that tenant with scheduled_for<=now, atomic $set lease. If that tenant has no due work, skip and advance cursor, try next tenant (up to N retries before returning empty). Preserves existing lease_expires_at (5 min) semantics.",
+      "task_type": "backend",
+      "feature_id": "3c41cadf-dcac-4140-a667-5b6da799f274",
+      "epic_id": "cf82e40d-b86b-4609-9fcb-f608b6b96af9",
+      "sprint_id": "7f503ef9-3bf1-4ce9-b055-9f4824e676a1",
+      "priority": "critical",
+      "acceptance_criteria": [
+        "lease_batch picks a tenant via tenant_cursors before querying send_queue",
+        "A whale tenant with 5M rows cannot monopolize lease_batch for more than BATCH_SIZE rows at a time",
+        "Empty-tenant skips advance cursor and retry up to N_TENANTS times"
+      ]
+    },
+    {
+      "title": "Add per-tenant daily cap check in throttle_service",
+      "description": "Add try_consume_tenant_daily_cap(tenant_user_id, limit) to server/app/services/throttle_service.py. Uses tenant_stats_daily collection keyed by (tenant_user_id, date_utc) with atomic $inc. Invoked inside lease_batch before leasing. When cap hit, skip tenant and advance cursor. Limit loaded from CRM /api/mcp/tenant-quotas refresh.",
+      "task_type": "service",
+      "feature_id": "3c41cadf-dcac-4140-a667-5b6da799f274",
+      "epic_id": "cf82e40d-b86b-4609-9fcb-f608b6b96af9",
+      "sprint_id": "7f503ef9-3bf1-4ce9-b055-9f4824e676a1",
+      "priority": "high",
+      "acceptance_criteria": [
+        "try_consume_tenant_daily_cap function exists and returns bool",
+        "tenant_stats_daily collection used for atomic counter",
+        "lease_batch skips tenant when cap exhausted"
+      ]
+    },
+    {
+      "title": "Sender pre-send campaign-status sync-check",
+      "description": "In server/app/agents/sender.py, before each SendGrid API call, verify the campaign is still in the cached active_campaigns set (refreshed every 60s from /api/mcp/active-work). Skip send and mark send_queue row status='cancelled_by_inactive' if not. Cheap race-condition safety for campaigns that finished between lease and send.",
+      "task_type": "backend",
+      "feature_id": "3c41cadf-dcac-4140-a667-5b6da799f274",
+      "epic_id": "cf82e40d-b86b-4609-9fcb-f608b6b96af9",
+      "sprint_id": "7f503ef9-3bf1-4ce9-b055-9f4824e676a1",
+      "priority": "high",
+      "acceptance_criteria": [
+        "Pre-send check consults in-process active_campaigns set",
+        "Skipped sends marked with status='cancelled_by_inactive'",
+        "Cache refresh every 60s on active-work poll"
+      ]
+    },
+    {
+      "title": "Boot-time env-var reading for CPU_VCPU and RAM_MB",
+      "description": "Extend server/app/core/settings.py to read CPU_VCPU (float) and RAM_MB (int) env vars with sane defaults (1.0 vCPU, 1024 MB). Validate numeric range. Values populated by ECS task definition or docker-compose run.",
+      "task_type": "backend",
+      "feature_id": "78c24fe4-7afd-4f87-9d30-740928df1068",
+      "epic_id": "cf82e40d-b86b-4609-9fcb-f608b6b96af9",
+      "sprint_id": "7f503ef9-3bf1-4ce9-b055-9f4824e676a1",
+      "priority": "critical",
+      "acceptance_criteria": [
+        "Settings.CPU_VCPU and Settings.RAM_MB loaded from env",
+        "Defaults to 1.0 vCPU and 1024 MB when unset",
+        "Invalid values raise at boot rather than silently falling back"
+      ]
+    },
+    {
+      "title": "Agent allocation calculator",
+      "description": "New module server/app/core/allocation.py with compute_allocation(cpu_vcpu, ram_mb) returning {senders, extraction, hygiene_eligible, daily_capacity}. Formula: senders = min(floor((ram_mb - 200) / 80), floor(cpu_vcpu * 20)) - extraction; extraction = 2 if total >= 20 else 1; hygiene_eligible = total >= 5; daily_capacity = senders * 180 * 8. Must match CRM-side calculator output bit-for-bit.",
+      "task_type": "backend",
+      "feature_id": "78c24fe4-7afd-4f87-9d30-740928df1068",
+      "epic_id": "cf82e40d-b86b-4609-9fcb-f608b6b96af9",
+      "sprint_id": "7f503ef9-3bf1-4ce9-b055-9f4824e676a1",
+      "priority": "critical",
+      "acceptance_criteria": [
+        "compute_allocation(1.0, 1024) returns {senders:4, extraction:1, hygiene_eligible:false, daily_capacity:5760}",
+        "compute_allocation(4.0, 8192) returns senders=40 or close equivalent",
+        "Output matches CRM-side TypeScript calculator for all 7 standard sizes"
+      ]
+    },
+    {
+      "title": "Apply allocation at supervisor startup",
+      "description": "In server/app/main.py (lines 108-120), replace hard-coded sender_agents=4 with compute_allocation result. Spawn senders and extraction agents accordingly. Log the allocation banner at startup for ops visibility.",
+      "task_type": "backend",
+      "feature_id": "78c24fe4-7afd-4f87-9d30-740928df1068",
+      "epic_id": "cf82e40d-b86b-4609-9fcb-f608b6b96af9",
+      "sprint_id": "7f503ef9-3bf1-4ce9-b055-9f4824e676a1",
+      "priority": "high",
+      "acceptance_criteria": [
+        "Sender count derived from compute_allocation at boot",
+        "Extraction count 1 or 2 based on allocation",
+        "Startup log includes the full allocation summary"
+      ]
+    },
+    {
+      "title": "Include allocation in register payload",
+      "description": "Extend POST /api/mcp/register body so CRM learns container size + allocation up front: cpu_vcpu, ram_mb, sender_agents, extraction_agents, hygiene_eligible, daily_capacity. Used by CRM to seed mcp_worker_instances size and capacity columns.",
+      "task_type": "service",
+      "feature_id": "78c24fe4-7afd-4f87-9d30-740928df1068",
+      "epic_id": "cf82e40d-b86b-4609-9fcb-f608b6b96af9",
+      "sprint_id": "7f503ef9-3bf1-4ce9-b055-9f4824e676a1",
+      "priority": "high",
+      "acceptance_criteria": [
+        "Register payload includes cpu_vcpu, ram_mb, sender_agents, extraction_agents, daily_capacity",
+        "CRM persists these on mcp_worker_instances insert",
+        "Hygiene election ignores hygiene_eligible=false containers"
+      ]
+    },
+    {
+      "title": "Refactor extraction agent to poll /api/mcp/active-work",
+      "description": "Change server/app/agents/extraction.py (lines 37-54) to call GET /api/mcp/active-work?since=<ts> instead of /api/mcp/campaigns. Response returns [{tenant_user_id, campaign_id, new_files}]. Iterate across all tenants; per-tenant lease acquires campaign_leases keyed by (tenant_user_id, campaign_id).",
+      "task_type": "backend",
+      "feature_id": "62737491-799a-4688-910d-5cc3bb8c3ab7",
+      "epic_id": "894a5b9c-06f2-4c0f-aaaa-7da7a7f86cbc",
+      "sprint_id": "7f503ef9-3bf1-4ce9-b055-9f4824e676a1",
+      "priority": "critical",
+      "acceptance_criteria": [
+        "Extraction agent polls /api/mcp/active-work every 60s",
+        "campaign_leases keyed on (tenant_user_id, campaign_id) tuple",
+        "Single container can process campaigns from multiple tenants concurrently"
+      ]
+    },
+    {
+      "title": "Tenant quotas refresh loop",
+      "description": "Add server/app/services/quota_refresher.py that calls GET /api/mcp/tenant-quotas every 15 minutes, caches per-tenant daily_cap, per_hour_cap, plan_tier in-process. Used by throttle_service for cap enforcement. On auth failure, attempt refresh-token flow once before alerting.",
+      "task_type": "service",
+      "feature_id": "62737491-799a-4688-910d-5cc3bb8c3ab7",
+      "epic_id": "894a5b9c-06f2-4c0f-aaaa-7da7a7f86cbc",
+      "sprint_id": "7f503ef9-3bf1-4ce9-b055-9f4824e676a1",
+      "priority": "high",
+      "acceptance_criteria": [
+        "Quota cache refreshed every 15 min",
+        "throttle_service reads from the cache, never direct HTTP per send",
+        "Cache survives CRM transient outages for up to 60 min"
+      ]
+    },
+    {
+      "title": "Heartbeat payload: container size + uptime",
+      "description": "In server/app/agents/heartbeat.py, extend the POST /api/mcp/heartbeat body with: cpu_vcpu, ram_mb, started_at_iso, uptime_seconds, senders_running, extraction_running, campaigns_in_flight[], tenants_served_count, extraction_queue_depth. Matches the richer schema CRM expects for the Fleet Dashboard.",
+      "task_type": "backend",
+      "feature_id": "e7e2432f-8675-494f-b8fa-f6f4767d3763",
+      "epic_id": "8d5d6ba0-4dcf-47a0-b1a8-4ad117c11e7f",
+      "sprint_id": "7f503ef9-3bf1-4ce9-b055-9f4824e676a1",
+      "priority": "high",
+      "acceptance_criteria": [
+        "Heartbeat body includes cpu_vcpu, ram_mb, started_at_iso, uptime_seconds",
+        "senders_running and extraction_running counts reflect live agent states",
+        "campaigns_in_flight is a deduped list of campaign_ids currently being processed"
+      ]
+    },
+    {
+      "title": "Per-tenant backlog counters in heartbeat metrics",
+      "description": "Compute per-tenant send_queue pending counts and include in heartbeat metrics.per_tenant_backlog = {tenant_user_id: count}. Aggregation runs every 30s cached. Used by CRM Fleet Manager to detect unfair starvation patterns.",
+      "task_type": "service",
+      "feature_id": "e7e2432f-8675-494f-b8fa-f6f4767d3763",
+      "epic_id": "8d5d6ba0-4dcf-47a0-b1a8-4ad117c11e7f",
+      "sprint_id": "7f503ef9-3bf1-4ce9-b055-9f4824e676a1",
+      "priority": "medium",
+      "acceptance_criteria": [
+        "metrics.per_tenant_backlog populated each heartbeat",
+        "Aggregation query uses existing (status, scheduled_for) index",
+        "Empty tenants omitted from the map"
+      ]
+    },
+    {
+      "title": "Shard-key field on multi-tenant collection writes",
+      "description": "Add shard_key to every document inserted/upserted into send_queue, campaign_contacts, refined_contacts, campaign_stats. Helper: sha256(str(tenant_user_id))[:16]. Applied in server/app/db/mongodb.py or at each service-layer insert. Future-proofs sharding with zero backfill when Mongo shard is enabled.",
+      "task_type": "database",
+      "feature_id": "cdf5c7bc-202d-4383-bcb5-d972487c7a00",
+      "epic_id": "8d5d6ba0-4dcf-47a0-b1a8-4ad117c11e7f",
+      "sprint_id": "7f503ef9-3bf1-4ce9-b055-9f4824e676a1",
+      "priority": "high",
+      "acceptance_criteria": [
+        "Every multi-tenant collection insert includes shard_key field",
+        "shard_key derived deterministically from tenant_user_id",
+        "At least one compound index prefixes on shard_key for shard-aware queries"
+      ]
+    },
+    {
+      "title": "Streaming JSON parser via ijson",
+      "description": "Replace json.loads(file.read()) in server/app/services/contact_parser.py:80 with ijson.items(file, 'item') for JSON files. Add ijson to requirements.txt. Ensures 500MB contact-list JSON does not OOM a 1GB container.",
+      "task_type": "backend",
+      "feature_id": "cdf5c7bc-202d-4383-bcb5-d972487c7a00",
+      "epic_id": "8d5d6ba0-4dcf-47a0-b1a8-4ad117c11e7f",
+      "sprint_id": "7f503ef9-3bf1-4ce9-b055-9f4824e676a1",
+      "priority": "medium",
+      "acceptance_criteria": [
+        "ijson used for JSON contact parsing",
+        "500MB test JSON file completes ingestion in nano-size container without OOM",
+        "CSV and XLSX paths unchanged"
+      ]
+    }
+  ]
+}
