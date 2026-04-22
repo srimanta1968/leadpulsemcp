@@ -11,11 +11,12 @@ import signal
 from datetime import datetime, timezone
 from typing import Any
 
+from app.agents import crm_connectivity
 from app.agents.supervisor import supervisor
 from app.core.logging import get_logger
 from app.core.runtime_config import runtime_config
 from app.db.mongodb import get_db
-from app.services import leadpulse_client as lpc_mod
+from app.services import leadpulse_client as lpc_mod, send_queue_service as sqs
 from app.services.runtime_probe import runtime_probe
 
 log = get_logger(__name__)
@@ -56,43 +57,96 @@ def _allocation_payload() -> dict[str, Any]:
 
 
 async def register_once() -> None:
-    """Called at startup after bootstrap. Receives per-instance HMAC secret."""
-    try:
-        resp = await lpc_mod.leadpulse_client.register(
-            allocation=_allocation_payload() or None,
-        )
-        has_secret = runtime_config.get().hmac_secret is not None
-        log.info(
-            "mcp_registered",
-            extra={
-                "extra_payload": {
-                    "instance_id": runtime_config.get().instance_id,
-                    "ok": bool(resp.get("success", True)) if isinstance(resp, dict) else True,
-                    "has_hmac_secret": has_secret,
-                }
-            },
-        )
-        if not has_secret:
-            log.error(
-                "mcp_registered_but_no_secret",
-                extra={"extra_payload": {
-                    "hint": "Subsequent CRM calls will 401. Check /register response shape."
-                }},
+    """Called at startup after bootstrap. Receives per-instance HMAC secret.
+
+    Retries up to 4 times with 5→10→20→40s backoff. First-HTTPS-call cold
+    stalls on Fargate (NAT-hairpin state setup) can take 10–15s; if the
+    60s per-attempt timeout still fails (edge case — nginx restart window,
+    etc.) the retries absorb it. Without retries a single bad moment at
+    boot would leave the container unable to register for its entire
+    lifetime since register is only called once at startup.
+    """
+    backoffs = (5, 10, 20, 40)
+    last_exc: Exception | None = None
+    for attempt, sleep_s in enumerate(backoffs, start=1):
+        try:
+            resp = await lpc_mod.leadpulse_client.register(
+                allocation=_allocation_payload() or None,
             )
-    except Exception as exc:  # noqa: BLE001
-        log.error(
-            "mcp_register_failed",
-            extra={"extra_payload": {"err": str(exc)[:300]}},
-        )
+            has_secret = runtime_config.get().hmac_secret is not None
+            log.info(
+                "mcp_registered",
+                extra={
+                    "extra_payload": {
+                        "instance_id": runtime_config.get().instance_id,
+                        "ok": bool(resp.get("success", True)) if isinstance(resp, dict) else True,
+                        "has_hmac_secret": has_secret,
+                        "attempt": attempt,
+                    }
+                },
+            )
+            if not has_secret:
+                log.error(
+                    "mcp_registered_but_no_secret",
+                    extra={"extra_payload": {
+                        "hint": "Subsequent CRM calls will 401. Check /register response shape."
+                    }},
+                )
+            return
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            log.warning(
+                "mcp_register_attempt_failed",
+                extra={
+                    "extra_payload": {
+                        "attempt": attempt,
+                        "max_attempts": len(backoffs),
+                        "err": str(exc)[:300] or type(exc).__name__,
+                        "next_retry_in_s": sleep_s if attempt < len(backoffs) else None,
+                    }
+                },
+            )
+            if attempt < len(backoffs):
+                await asyncio.sleep(sleep_s)
+
+    log.error(
+        "mcp_register_failed",
+        extra={
+            "extra_payload": {
+                "err": str(last_exc)[:300] or type(last_exc).__name__ if last_exc else "unknown",
+                "attempts": len(backoffs),
+            }
+        },
+    )
 
 
 async def run() -> None:
     while True:
         try:
             await _send_heartbeat()
-        except Exception:  # noqa: BLE001
+            crm_connectivity.on_heartbeat_success()
+        except Exception as exc:  # noqa: BLE001
+            crm_connectivity.on_heartbeat_failure(str(exc))
             log.exception("heartbeat_failed")
-        await asyncio.sleep(_HEARTBEAT_INTERVAL_SECONDS)
+
+        if crm_connectivity.should_self_terminate():
+            # Isolated for > 10 min. Stop cleanly so ECS replaces us — we
+            # stop pulling new work (already) and drain the supervisor so
+            # in-flight sends finish before the task dies.
+            log.error(
+                "crm_isolation_self_terminate",
+                extra={"extra_payload": crm_connectivity.snapshot()},
+            )
+            try:
+                await supervisor.stop_all(timeout=_DRAIN_GRACE_SECONDS)
+            except Exception:  # noqa: BLE001
+                log.exception("isolation_drain_failed")
+            # Exit the heartbeat loop cleanly — main.py's lifespan will
+            # tear the rest down and FastAPI will exit, triggering ECS
+            # task replacement.
+            return
+
+        await asyncio.sleep(crm_connectivity.next_heartbeat_sleep_s())
 
 
 async def _send_heartbeat(status_override: str | None = None) -> None:
@@ -125,6 +179,13 @@ async def _send_heartbeat(status_override: str | None = None) -> None:
 
     campaigns_in_flight = await _current_campaigns(db)
     tenant_backlog = await _per_tenant_backlog(db)
+    try:
+        campaign_progress = await sqs.campaign_progress_snapshot(
+            db, campaigns_in_flight
+        )
+    except Exception:  # noqa: BLE001
+        log.exception("campaign_progress_snapshot_failed")
+        campaign_progress = []
 
     payload = {
         "instance_id": cfg.instance_id,
@@ -140,8 +201,10 @@ async def _send_heartbeat(status_override: str | None = None) -> None:
         "mongo_lag_ms": snap.mongo_latency_ms,
         "campaigns_in_flight": campaigns_in_flight,
         "tenant_backlog": tenant_backlog,
+        "campaign_progress": campaign_progress,
         "health_messages": snap.messages,
         "uptime_seconds": _uptime_seconds(),
+        "crm_connectivity": crm_connectivity.snapshot(),
     }
     allocation = _allocation_payload()
     if allocation:
@@ -165,10 +228,18 @@ async def _send_heartbeat(status_override: str | None = None) -> None:
         upsert=True,
     )
 
-    try:
-        await lpc_mod.leadpulse_client.heartbeat(payload)
-    except Exception:  # noqa: BLE001
-        log.exception("heartbeat_post_failed")
+    # Let errors propagate so run() can feed them into
+    # crm_connectivity.on_heartbeat_failure(). The drain path has its own
+    # catch below.
+    resp = await lpc_mod.leadpulse_client.heartbeat(payload)
+
+    # The CRM returns drain_requested when an operator has clicked
+    # "Drain Fleet" in the admin UI. Surfacing it through the heartbeat
+    # response avoids needing reachable container URLs (works behind an
+    # ALB and across VPCs).
+    data = (resp or {}).get("data") if isinstance(resp, dict) else None
+    if isinstance(data, dict):
+        crm_connectivity.set_drain_requested(bool(data.get("drainRequested")))
 
 
 async def _current_campaigns(db) -> list[str]:
@@ -220,6 +291,7 @@ async def _drain(stop_event: asyncio.Event, sig: signal.Signals) -> None:
     try:
         await _send_heartbeat(status_override="draining")
     except Exception:  # noqa: BLE001
+        # Drain may happen while CRM is unreachable — don't block shutdown.
         log.exception("drain_heartbeat_failed")
     try:
         await supervisor.stop_all(timeout=_DRAIN_GRACE_SECONDS)

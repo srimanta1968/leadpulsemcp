@@ -35,12 +35,17 @@ async def send_email(
     subject: str,
     body_html: str,
     body_text: str,
+    idempotency_key: str | None = None,
 ) -> SendResult:
     provider = (creds.get("provider") or "").lower()
     if provider == "sendgrid":
-        return await _send_via_sendgrid(creds, to_email, subject, body_html, body_text)
+        return await _send_via_sendgrid(
+            creds, to_email, subject, body_html, body_text, idempotency_key
+        )
     if provider == "smtp":
-        return await _send_via_smtp(creds, to_email, subject, body_html, body_text)
+        return await _send_via_smtp(
+            creds, to_email, subject, body_html, body_text, idempotency_key
+        )
     return SendResult(
         ok=False, provider=provider or "unknown", provider_message_id=None,
         error=f"Unsupported provider: {provider!r}",
@@ -48,7 +53,12 @@ async def send_email(
 
 
 async def _send_via_sendgrid(
-    creds: dict[str, Any], to_email: str, subject: str, body_html: str, body_text: str
+    creds: dict[str, Any],
+    to_email: str,
+    subject: str,
+    body_html: str,
+    body_text: str,
+    idempotency_key: str | None,
 ) -> SendResult:
     api_key = creds.get("api_key") or creds.get("apiKey")
     from_email = creds.get("from_email") or creds.get("fromEmail")
@@ -57,7 +67,7 @@ async def _send_via_sendgrid(
         return SendResult(ok=False, provider="sendgrid", provider_message_id=None,
                           error="Missing sendgrid api_key or from_email")
 
-    payload = {
+    payload: dict[str, Any] = {
         "personalizations": [{"to": [{"email": to_email}]}],
         "from": {"email": from_email, "name": from_name},
         "subject": subject,
@@ -66,6 +76,13 @@ async def _send_via_sendgrid(
             {"type": "text/html", "value": body_html or ""},
         ],
     }
+    if idempotency_key:
+        # custom_args echoes back on SendGrid Event Webhook so we can
+        # reconcile a crash between SMTP success and our status write.
+        payload["custom_args"] = {"idempotency_key": idempotency_key}
+        # Stable Message-Id lets recipient mail servers dedupe on re-send.
+        domain = from_email.split("@", 1)[1] if "@" in from_email else "leadpulse.local"
+        payload["headers"] = {"Message-Id": f"<{idempotency_key}@{domain}>"}
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     backoff = 1.0
     for attempt in range(4):
@@ -106,7 +123,12 @@ async def _send_via_sendgrid(
 
 
 async def _send_via_smtp(
-    creds: dict[str, Any], to_email: str, subject: str, body_html: str, body_text: str
+    creds: dict[str, Any],
+    to_email: str,
+    subject: str,
+    body_html: str,
+    body_text: str,
+    idempotency_key: str | None,
 ) -> SendResult:
     host = creds.get("smtp_host")
     port = int(creds.get("smtp_port") or 587)
@@ -123,6 +145,10 @@ async def _send_via_smtp(
         msg["From"] = f"{from_name} <{from_email}>" if from_name else from_email
         msg["To"] = to_email
         msg["Subject"] = subject
+        if idempotency_key:
+            # RFC 5322 Message-ID — recipients commonly dedupe identical IDs.
+            domain = from_email.split("@", 1)[1] if "@" in from_email else "leadpulse.local"
+            msg["Message-ID"] = f"<{idempotency_key}@{domain}>"
         if body_text:
             msg.set_content(body_text)
         if body_html:

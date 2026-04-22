@@ -13,6 +13,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
+from app.agents import crm_connectivity
 from app.agents.supervisor import supervisor
 from app.core.logging import get_logger, hash_email
 from app.core.metrics import metric_counter, metric_latency_ms
@@ -68,6 +69,21 @@ async def run(agent_uid: str, is_sweeper: bool = False) -> None:
             await asyncio.sleep(_POLL_INTERVAL_SECONDS)
             continue
 
+        # CRM-connectivity gate: when heartbeats have been failing for
+        # 30s+ (stop_new_work / degraded / isolated) we skip leasing new
+        # send_queue docs. Anything already leased before this gate kicked
+        # in still runs through mark_status normally — in-flight work
+        # completes, only new work pauses. When heartbeats recover, we
+        # resume automatically.
+        if not crm_connectivity.can_lease_new_work():
+            mode = crm_connectivity.current_mode()
+            log.warning(
+                "sender_paused_crm_connectivity",
+                extra={"extra_payload": {"mode": mode.value, "pause_s": _POLL_INTERVAL_SECONDS}},
+            )
+            await asyncio.sleep(_POLL_INTERVAL_SECONDS)
+            continue
+
         # Backpressure: when pending_crm_events is > 80% full, stop
         # leasing new sends for 60s so the replay worker can catch up.
         try:
@@ -97,12 +113,15 @@ async def run(agent_uid: str, is_sweeper: bool = False) -> None:
             await _process_one(doc, active_campaigns_cache)
 
 
-def _within_send_window(campaign_summary: dict[str, Any]) -> bool:
+def _within_send_window(campaign_summary: dict[str, Any], contact_tz: str | None = None) -> bool:
     from datetime import time as _time
     from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
     cfg = campaign_summary.get("config") or campaign_summary
-    tz_name = cfg.get("timezone") or "UTC"
+    # Per-contact tz wins over campaign tz when present. This lets a single
+    # campaign target contacts across regions and still respect each
+    # recipient's 09:00–17:00 local window.
+    tz_name = contact_tz or cfg.get("timezone") or "UTC"
     start_s = cfg.get("send_window_start") or "00:00"
     end_s = cfg.get("send_window_end") or "23:59"
     try:
@@ -156,10 +175,17 @@ async def _process_one(doc: dict[str, Any], active_campaigns: dict[str, dict[str
         await sqs.mark_status(db, doc["_id"], "pending", last_error=f"campaign_{status}")
         return
 
+    # Per-contact tz lookup (cheap projection). Falls back to campaign tz
+    # inside _within_send_window when absent.
+    contact_tz: str | None = None
+    tz_doc = await db.refined_contacts.find_one({"email": email}, {"tz": 1})
+    if tz_doc and tz_doc.get("tz"):
+        contact_tz = str(tz_doc["tz"])
+
     # Campaign send-window gate — defer if outside [send_window_start, send_window_end]
-    # in the campaign's configured timezone. Keeps sends aligned with the user's
-    # local business hours regardless of where the MCP container runs.
-    if not _within_send_window(campaign_summary):
+    # in the contact's (or campaign's) configured timezone. Keeps sends aligned
+    # with each recipient's local business hours.
+    if not _within_send_window(campaign_summary, contact_tz):
         await sqs.mark_status(db, doc["_id"], "pending", last_error="outside_window")
         return
 
@@ -259,6 +285,7 @@ async def _process_one(doc: dict[str, Any], active_campaigns: dict[str, dict[str
         subject=rendered["subject"],
         body_html=rendered["body_html"],
         body_text=rendered["body_text"],
+        idempotency_key=doc.get("idempotency_key"),
     )
 
     now_iso = datetime.now(timezone.utc).isoformat()

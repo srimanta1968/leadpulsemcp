@@ -365,7 +365,12 @@ class LeadPulseClient:
             },
         )
 
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        # 60s (was 15s) — first HTTPS call from a fresh Fargate task often
+        # stalls ~10–15s while AWS sets up the NAT-hairpin state for traffic
+        # leaving the VPC and returning to the same EC2's public IP. Once
+        # the stateful entry exists, subsequent calls are sub-second. The
+        # longer timeout lets register tolerate that cold-start latency.
+        async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(url, content=body_bytes, headers=headers)
 
         if resp.status_code >= 400:
@@ -418,6 +423,18 @@ class LeadPulseClient:
 
     async def get_campaign_manifest(self, campaign_id: str) -> dict[str, Any]:
         return await self._request("GET", f"/api/mcp/campaigns/{campaign_id}/manifest")
+
+    async def get_conversions(
+        self, since: str | None = None, limit: int = 200
+    ) -> dict[str, Any]:
+        """Pull recent CRM lead-conversions (click/booking engagements).
+        MCP drains this every minute and cascades skipped_converted into
+        the Mongo send_queue so post-engagement sequence steps stop firing.
+        """
+        params: dict[str, Any] = {"limit": limit}
+        if since:
+            params["since"] = since
+        return await self._request("GET", "/api/mcp/conversions", params=params)
 
     async def post_file_ingested(self, payload: dict[str, Any]) -> dict[str, Any]:
         return await self._post_or_buffer("/api/mcp/file-ingested", payload)

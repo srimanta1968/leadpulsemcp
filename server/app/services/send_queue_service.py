@@ -1,6 +1,7 @@
 """Send-queue operations: enqueue, lease, mark status, sweep expired leases."""
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -21,6 +22,13 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def compute_idempotency_key(campaign_id: str, email: str, step_index: int) -> str:
+    # Stable across retries so providers/recipients can dedupe if a crash
+    # between SMTP success and status write causes a re-send.
+    payload = f"{campaign_id}|{email.lower().strip()}|{step_index}".encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
 async def enqueue_send(
     db: AsyncIOMotorDatabase,
     *,
@@ -33,18 +41,20 @@ async def enqueue_send(
     scheduled_for: datetime,
 ) -> bool:
     """Upsert a single (campaign, email, step) send_queue doc. Returns True on insert."""
+    normalized_email = email.lower().strip()
     doc = {
         "_id": ObjectId(),
         "campaign_id": campaign_id,
         "tenant_user_id": tenant_user_id,
         "shard_key": tenant_shard_key(tenant_user_id),
         "contact_id": contact_id,
-        "email": email.lower().strip(),
+        "email": normalized_email,
         "step_index": step_index,
         "tracker_id": tracker_id,
         "scheduled_for": scheduled_for,
         "status": "pending",
         "attempts": 0,
+        "idempotency_key": compute_idempotency_key(campaign_id, normalized_email, step_index),
         "created_at": _now(),
         "updated_at": _now(),
     }
@@ -140,6 +150,15 @@ async def lease_batch(
         )
         if doc is None:
             break
+        # Lazy-backfill idempotency_key for docs enqueued before the field existed.
+        if not doc.get("idempotency_key"):
+            key = compute_idempotency_key(
+                doc["campaign_id"], doc["email"], int(doc.get("step_index", 0))
+            )
+            await db.send_queue.update_one(
+                {"_id": doc["_id"]}, {"$set": {"idempotency_key": key}}
+            )
+            doc["idempotency_key"] = key
         leased.append(doc)
     return leased
 
@@ -192,3 +211,103 @@ async def pending_depth(db: AsyncIOMotorDatabase, campaign_id: str) -> int:
     return await db.send_queue.count_documents(
         {"campaign_id": campaign_id, "status": "pending"}
     )
+
+
+async def campaign_progress_snapshot(
+    db: AsyncIOMotorDatabase, campaign_ids: list[str]
+) -> list[dict[str, Any]]:
+    """Per-campaign totals + per-step breakdown for the CRM campaign dashboard.
+
+    One aggregation pass over send_queue with `(campaign, status)` and
+    `(campaign, step, status)` groupings. Returns one doc per campaign
+    containing:
+        {
+          campaign_id,
+          totals: {pending, leased, sent, failed, bounced, skipped},
+          by_step: [{step_index, pending, leased, sent, failed, bounced, skipped}],
+        }
+    Skipped = skipped_hygiene + skipped_converted — surface as one bucket
+    since the UI doesn't differentiate and summing keeps the payload
+    small.
+
+    The CRM stores the latest snapshot per (campaign, instance) and
+    aggregates across containers for the dashboard.
+    """
+    if not campaign_ids:
+        return []
+
+    # One $group that rolls everything up; we split totals vs by_step in
+    # Python so the index on (campaign_id, status) still does the heavy
+    # lifting and we avoid a double-pass.
+    pipeline = [
+        {"$match": {"campaign_id": {"$in": campaign_ids}}},
+        {
+            "$group": {
+                "_id": {
+                    "campaign_id": "$campaign_id",
+                    "step_index": "$step_index",
+                    "status": "$status",
+                },
+                "count": {"$sum": 1},
+            }
+        },
+    ]
+
+    def _bucket(status: str) -> str:
+        if status == "sent":
+            return "sent"
+        if status == "bounced":
+            return "bounced"
+        if status == "failed":
+            return "failed"
+        if status in ("skipped_hygiene", "skipped_converted"):
+            return "skipped"
+        if status == "leased":
+            return "leased"
+        return "pending"
+
+    per_campaign: dict[str, dict[str, Any]] = {}
+    async for doc in db.send_queue.aggregate(pipeline):
+        cid = doc["_id"]["campaign_id"]
+        step = int(doc["_id"].get("step_index", 0) or 0)
+        bucket = _bucket(str(doc["_id"]["status"]))
+        count = int(doc["count"])
+        entry = per_campaign.setdefault(
+            cid,
+            {
+                "campaign_id": cid,
+                "totals": {
+                    "pending": 0,
+                    "leased": 0,
+                    "sent": 0,
+                    "failed": 0,
+                    "bounced": 0,
+                    "skipped": 0,
+                },
+                "by_step": {},
+            },
+        )
+        entry["totals"][bucket] += count
+        step_entry = entry["by_step"].setdefault(
+            step,
+            {
+                "step_index": step,
+                "pending": 0,
+                "leased": 0,
+                "sent": 0,
+                "failed": 0,
+                "bounced": 0,
+                "skipped": 0,
+            },
+        )
+        step_entry[bucket] += count
+
+    out: list[dict[str, Any]] = []
+    for cid in campaign_ids:
+        entry = per_campaign.get(cid)
+        if entry is None:
+            continue
+        # Flatten by_step into a sorted list.
+        entry["by_step"] = sorted(entry["by_step"].values(), key=lambda s: s["step_index"])
+        out.append(entry)
+    return out

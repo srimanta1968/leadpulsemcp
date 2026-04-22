@@ -69,12 +69,14 @@ RUN python -m nuitka \
         --nofollow-import-to=pytest \
         --nofollow-import-to=tests \
         app/entrypoint.py \
- && ls -lh /build/out/leadpulse-mcp \
- && /build/out/leadpulse-mcp --help >/dev/null 2>&1 || true
+ && ls -lh /build/out/leadpulse-mcp
 # NOTE: Full container smoke test runs post-build via scripts/smoke-test.sh
 # (starts the container and polls /health with a 40s deadline). This detects
-# missing-module traps that Nuitka's dynamic-import handling can create without
-# needing a live Mongo + CRM for the compile stage.
+# missing-module traps that Nuitka's dynamic-import handling can create
+# without needing a live Mongo + CRM for the compile stage.
+# (Earlier we ran `leadpulse-mcp --help` here as a cheap sanity check, but
+# the onefile boots FastAPI rather than exiting on --help — it would hang
+# the build indefinitely. The external smoke test covers the same ground.)
 
 # -------------------- runtime --------------------
 FROM debian:bookworm-slim AS runtime
