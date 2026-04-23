@@ -28,12 +28,41 @@ def _render_placeholders(template: str, ctx: dict[str, Any]) -> str:
     return _PLACEHOLDER_RE.sub(sub, template)
 
 
-def _wrap_links(html: str, tracker_base: str, tracker_id: str) -> str:
+def _link_type_hint(url: str, booking_url: str | None, target_url: str | None) -> str | None:
+    """Classify a URL as booking/target_url so the CRM click handler can
+    branch behavior (booking-CTA click creates a Prospect; others are
+    counter-only). Matches on the prefix before the first {placeholder}
+    token so {trackerId} / {company_url} stubs don't defeat the check.
+    """
+    def _prefix(u: str) -> str:
+        brace = u.find("{")
+        return u[:brace] if brace >= 0 else u
+
+    if booking_url:
+        bp = _prefix(booking_url).rstrip("/")
+        if bp and url.startswith(bp):
+            return "booking"
+    if target_url:
+        tp = _prefix(target_url).rstrip("/")
+        if tp and url.startswith(tp):
+            return "target_url"
+    return None
+
+
+def _wrap_links(
+    html: str,
+    tracker_base: str,
+    tracker_id: str,
+    booking_url: str | None = None,
+    target_url: str | None = None,
+) -> str:
     def rewrite(m: re.Match[str]) -> str:
         pre, url, post = m.group(1), m.group(2), m.group(3)
         from urllib.parse import quote
 
-        wrapped = f"{tracker_base}/api/tracking/click/{tracker_id}?url={quote(url, safe='')}"
+        hint = _link_type_hint(url, booking_url, target_url)
+        t_param = f"&t={hint}" if hint else ""
+        wrapped = f"{tracker_base}/api/tracking/click/{tracker_id}?url={quote(url, safe='')}{t_param}"
         return f"<a {pre}href=\"{wrapped}\"{post}>"
 
     return _ANCHOR_RE.sub(rewrite, html)
@@ -125,7 +154,19 @@ def render_email(
         body_html = _text_to_html(body_text)
 
     if body_html and tracker_id:
-        body_html = _wrap_links(body_html, tracker_base_url.rstrip("/"), tracker_id)
+        booking_hint = (
+            campaign.get("booking_url_template")
+            or campaign.get("booking_link_template")
+            or None
+        )
+        target_hint = campaign.get("target_url_template") or None
+        body_html = _wrap_links(
+            body_html,
+            tracker_base_url.rstrip("/"),
+            tracker_id,
+            booking_url=booking_hint,
+            target_url=target_hint,
+        )
         body_html = _append_pixel(body_html, tracker_base_url.rstrip("/"), tracker_id)
 
     return {"subject": subject, "body_html": body_html, "body_text": body_text}
