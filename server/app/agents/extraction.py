@@ -43,24 +43,37 @@ async def run() -> None:
             await asyncio.sleep(_POLL_INTERVAL_SECONDS)
             continue
         try:
+            poll_started_at = datetime.now(timezone.utc).isoformat()
             resp = await lpc_mod.leadpulse_client.get_active_campaigns(since=since)
             campaigns: list[dict[str, Any]] = (resp.get("data") or {}).get("campaigns", [])
+            all_ok = True
             for campaign in campaigns:
-                await _ingest_campaign(container_id, campaign)
-            since = datetime.now(timezone.utc).isoformat()
+                campaign_ok = await _ingest_campaign(container_id, campaign)
+                if not campaign_ok:
+                    all_ok = False
+            # Only advance `since` when every file in every campaign this tick
+            # finished cleanly. A transient presign failure or 5xx must not
+            # park a campaign forever — next tick will re-list it.
+            if all_ok:
+                since = poll_started_at
         except Exception:  # noqa: BLE001
             log.exception("extraction_poll_failed")
         await asyncio.sleep(_POLL_INTERVAL_SECONDS)
 
 
-async def _ingest_campaign(container_id: str, summary: dict[str, Any]) -> None:
+async def _ingest_campaign(container_id: str, summary: dict[str, Any]) -> bool:
+    """Ingest every non-complete file in a campaign. Returns True if every
+    attempted file finished cleanly (or was already complete / skipped).
+    Returning False tells the caller not to advance its `since` watermark,
+    so the campaign stays in the next poll's delta window."""
     campaign_id = summary.get("id") or summary.get("campaign_id")
     if not campaign_id:
-        return
+        return True
     db = get_db()
     acquired = await lease_service.acquire_campaign_lease(db, campaign_id, container_id)
     if not acquired:
-        return  # another container holds the lease
+        return True  # another container holds the lease — not our failure
+    ok = True
     try:
         manifest_resp = await lpc_mod.leadpulse_client.get_campaign_manifest(campaign_id)
         manifest = manifest_resp.get("data") or manifest_resp
@@ -69,17 +82,24 @@ async def _ingest_campaign(container_id: str, summary: dict[str, Any]) -> None:
         steps = manifest.get("steps") or campaign.get("sequence_snapshot") or []
         tenant_user_id = campaign.get("tenant_user_id") or campaign.get("user_id")
         for file_info in files:
-            if file_info.get("ingestion_status") == "complete":
+            status = file_info.get("ingestion_status")
+            if status in ("complete", "failed"):
                 continue
-            await _ingest_file(
+            file_ok = await _ingest_file(
                 campaign_id=campaign_id,
                 tenant_user_id=tenant_user_id,
                 campaign=campaign,
                 steps=steps,
                 file_info=file_info,
             )
+            if not file_ok:
+                ok = False
+    except Exception:  # noqa: BLE001
+        log.exception("ingest_campaign_failed", extra={"extra_payload": {"campaign_id": campaign_id}})
+        ok = False
     finally:
         await lease_service.release_campaign_lease(db, campaign_id, container_id)
+    return ok
 
 
 async def _ingest_file(
@@ -89,14 +109,18 @@ async def _ingest_file(
     campaign: dict[str, Any],
     steps: list[dict[str, Any]],
     file_info: dict[str, Any],
-) -> None:
+) -> bool:
+    """Ingest one file. Returns False only for transient manifest issues
+    (missing presigned URL) so the outer loop keeps the campaign in its
+    delta window. Parse / validation failures return True because they
+    mark the file 'failed' on the CRM and should not retry forever."""
     db = get_db()
     file_id = file_info.get("file_id") or file_info.get("id") or ""
     presigned_url = file_info.get("presigned_url") or file_info.get("s3_url")
     filename = file_info.get("original_filename") or file_info.get("filename") or "unknown"
     if not presigned_url:
         log.error("ingest_missing_presigned_url", extra={"extra_payload": {"file_id": file_id}})
-        return
+        return False
 
     try:
         content = await _download_bytes(presigned_url)
@@ -110,39 +134,75 @@ async def _ingest_file(
                 content = await _download_bytes(match["presigned_url"] or match["s3_url"])
             else:
                 await _report_file_failed(file_id, str(exc))
-                return
+                return True
         else:
             await _report_file_failed(file_id, str(exc))
-            return
+            return True
 
-    rows: list[dict[str, Any]] = []
-    parse_errors = 0
+    # Header validation — peek at the first row without materializing the
+    # whole file. Fail fast if required columns are missing so the user
+    # sees a clear error instead of an empty ingest result.
     try:
-        for normalized in contact_parser.parse_stream(filename, content):
-            rows.append(normalized)
+        headers = contact_parser.peek_headers(filename, content)
     except ValueError as exc:
         await _report_file_failed(file_id, f"unparseable: {exc}")
-        return
+        return True
+    header_report = contact_parser.validate_headers(headers)
+    if header_report["missing_required"]:
+        missing = ", ".join(header_report["missing_required"])  # type: ignore[arg-type]
+        await _report_file_failed(
+            file_id,
+            f"missing required column(s): {missing}",
+            validation={
+                "matched": header_report["matched"],
+                "missing_required": header_report["missing_required"],
+                "unknown_headers": header_report["unknown"],
+            },
+        )
+        return True
+
+    rows: list[dict[str, Any]] = []
+    row_stats: dict[str, int] = {}
+    try:
+        rows, row_stats = contact_parser.parse_stream_with_stats(filename, content)
+    except ValueError as exc:
+        await _report_file_failed(file_id, f"unparseable: {exc}")
+        return True
+
+    validation_block: dict[str, object] = {
+        "matched": header_report["matched"],
+        "unknown_headers": header_report["unknown"],
+        **row_stats,
+    }
 
     if not rows:
         await lpc_mod.leadpulse_client.post_file_ingested(
-            {"file_id": file_id, "row_count": 0, "error_count": 0, "ingestion_status": "complete"}
+            {
+                "file_id": file_id,
+                "row_count": 0,
+                "error_count": row_stats.get("rows_missing_email", 0)
+                + row_stats.get("rows_invalid_email", 0),
+                "ingestion_status": "complete",
+                "validation": validation_block,
+            }
         )
-        return
+        return True
 
-    # For full fidelity we'd count per-row errors during parse_stream. Here we
-    # approximate: normalized rows that made it through are valid.
-    stats = await rcs.bulk_upsert(
+    upsert_stats = await rcs.bulk_upsert(
         db, campaign_id, tenant_user_id, rows, source_file_id=file_id
     )
-    parse_errors += stats.get("errors", 0)
+    parse_errors = (
+        upsert_stats.get("errors", 0)
+        + row_stats.get("rows_missing_email", 0)
+        + row_stats.get("rows_invalid_email", 0)
+    )
     error_rate = parse_errors / max(1, len(rows) + parse_errors)
 
     if error_rate > _MAX_ROW_ERROR_RATE:
         await _report_file_failed(
             file_id, f"row error rate {error_rate:.0%} > 10%"
         )
-        return
+        return True
 
     # Enqueue sends for each contact x step
     tracker_ids = {t.get("email"): t.get("tracker_id") for t in (file_info.get("trackers") or [])}
@@ -188,19 +248,37 @@ async def _ingest_file(
             "row_count": len(rows),
             "error_count": parse_errors,
             "ingestion_status": "complete",
+            "validation": validation_block,
         }
     )
+    return True
 
 
-async def _report_file_failed(file_id: str, message: str) -> None:
+async def _report_file_failed(
+    file_id: str,
+    message: str,
+    validation: dict[str, object] | None = None,
+) -> None:
     db = get_db()
     await db.ingest_errors.insert_one(
-        {"file_id": file_id, "message": message, "ts": datetime.now(timezone.utc)}
+        {
+            "file_id": file_id,
+            "message": message,
+            "validation": validation,
+            "ts": datetime.now(timezone.utc),
+        }
     )
     try:
-        await lpc_mod.leadpulse_client.post_file_ingested(
-            {"file_id": file_id, "row_count": 0, "error_count": 1, "ingestion_status": "failed", "error": message}
-        )
+        payload: dict[str, object] = {
+            "file_id": file_id,
+            "row_count": 0,
+            "error_count": 1,
+            "ingestion_status": "failed",
+            "error": message,
+        }
+        if validation is not None:
+            payload["validation"] = validation
+        await lpc_mod.leadpulse_client.post_file_ingested(payload)
     except Exception:  # noqa: BLE001
         log.exception("report_file_failed_unreachable")
 

@@ -42,6 +42,10 @@ async def enqueue_send(
 ) -> bool:
     """Upsert a single (campaign, email, step) send_queue doc. Returns True on insert."""
     normalized_email = email.lower().strip()
+    # updated_at lives only in $set — keeping it here too would make Mongo
+    # reject the upsert with "Updating the path 'updated_at' would create
+    # a conflict at 'updated_at'". $set runs on both insert and update so
+    # the field still gets a fresh timestamp on creation.
     doc = {
         "_id": ObjectId(),
         "campaign_id": campaign_id,
@@ -56,7 +60,6 @@ async def enqueue_send(
         "attempts": 0,
         "idempotency_key": compute_idempotency_key(campaign_id, normalized_email, step_index),
         "created_at": _now(),
-        "updated_at": _now(),
     }
     res = await db.send_queue.update_one(
         {"campaign_id": campaign_id, "email": doc["email"], "step_index": step_index},
