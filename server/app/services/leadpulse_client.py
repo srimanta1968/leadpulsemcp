@@ -35,8 +35,13 @@ log = get_logger(__name__)
 _SECRET_CACHE_TTL_SECONDS = 600
 _TOKEN_REFRESH_LEAD_SECONDS = 300
 _CIRCUIT_WINDOW_SECONDS = 600
-_CIRCUIT_ERROR_RATE_THRESHOLD = 0.05
-_CIRCUIT_MIN_SAMPLES = 20
+# Threshold is per logical CRM call, not per HTTP attempt — 1 failing call with
+# 3 retries now counts as 1 error, not 3 (see _request's end-of-retry record).
+# We keep the threshold tight (25%) so a genuinely broken CRM still trips
+# quickly, while transient single failures don't cascade. MIN_SAMPLES raised
+# so early-boot flakiness can't open the breaker before the signal is real.
+_CIRCUIT_ERROR_RATE_THRESHOLD = 0.25
+_CIRCUIT_MIN_SAMPLES = 30
 _CIRCUIT_HALF_OPEN_AFTER_SECONDS = 60
 
 
@@ -163,6 +168,10 @@ class LeadPulseClient:
         backoff = 1.0
         last_exc: Exception | None = None
 
+        # One logical CRM call maps to one breaker sample. Retries inside
+        # the loop do NOT double-count failures — otherwise 3 retries of a
+        # single bad call would record 3 errors and trip the breaker much
+        # faster than the real error rate warrants.
         for attempt in range(max_retries):
             try:
                 async with httpx.AsyncClient(timeout=15.0) as client:
@@ -175,7 +184,9 @@ class LeadPulseClient:
                     )
                 if resp.status_code == 401 and allow_refresh:
                     await self._refresh_token()
-                    # retry once with new token; disable further refresh to avoid loops
+                    # Retry once with new token; disable further refresh to avoid
+                    # loops. Recurse into _request — it will record its own sample,
+                    # so don't record here.
                     return await self._request(
                         method, path, json_body=json_body, params=params,
                         allow_refresh=False, max_retries=1,
@@ -187,19 +198,19 @@ class LeadPulseClient:
                 return resp.json()
             except httpx.HTTPStatusError as exc:
                 last_exc = exc
-                self._breaker.record(ok=False)
                 if attempt == max_retries - 1:
                     break
                 await asyncio.sleep(backoff)
                 backoff *= 2
             except httpx.HTTPError as exc:
                 last_exc = exc
-                self._breaker.record(ok=False)
                 if attempt == max_retries - 1:
                     break
                 await asyncio.sleep(backoff)
                 backoff *= 2
 
+        # All retries exhausted — record a single failure for the whole call.
+        self._breaker.record(ok=False)
         assert last_exc is not None
         raise CrmUnavailable(f"CRM call {method} {path} failed: {last_exc}")
 
