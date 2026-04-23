@@ -48,12 +48,26 @@ async def buffer_event(
     )
 
 
+_MAX_ATTEMPTS = 20
+_PERMANENT_STATUS_MARKERS = ("'404", "'410", "'400")
+
+
+def _is_permanent(err_text: str) -> bool:
+    return any(marker in err_text for marker in _PERMANENT_STATUS_MARKERS)
+
+
 async def drain_once(
     db: AsyncIOMotorDatabase,
     poster: Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]],
     batch_size: int = 50,
 ) -> int:
-    """Send up to ``batch_size`` buffered events. Returns count successfully sent."""
+    """Send up to ``batch_size`` buffered events. Returns count successfully sent.
+
+    Permanently-failing events (CRM 400/404/410 — typically from a file the
+    user deleted in the UI) are dropped to the dead-letter collection so
+    they don't head-of-line-block newer events. Transient failures break
+    the loop and are retried on the next tick.
+    """
     sent = 0
     cursor = db.pending_crm_events.find({}).sort("queued_at", 1).limit(batch_size)
     async for doc in cursor:
@@ -62,9 +76,33 @@ async def drain_once(
             await db.pending_crm_events.delete_one({"_id": doc["_id"]})
             sent += 1
         except Exception as exc:  # noqa: BLE001
+            err_text = str(exc)
+            attempts = int(doc.get("attempts") or 0) + 1
+            if _is_permanent(err_text) or attempts >= _MAX_ATTEMPTS:
+                await db.pending_crm_events.delete_one({"_id": doc["_id"]})
+                await db.pending_crm_events_dlq.insert_one(
+                    {
+                        **{k: v for k, v in doc.items() if k != "_id"},
+                        "attempts": attempts,
+                        "last_error": err_text[:300],
+                        "dropped_at": datetime.now(timezone.utc),
+                    }
+                )
+                log.warning(
+                    "pending_event_dead_lettered",
+                    extra={
+                        "extra_payload": {
+                            "endpoint": doc.get("endpoint"),
+                            "file_id": (doc.get("payload") or {}).get("file_id"),
+                            "attempts": attempts,
+                            "permanent": _is_permanent(err_text),
+                        }
+                    },
+                )
+                continue
             await db.pending_crm_events.update_one(
                 {"_id": doc["_id"]},
-                {"$inc": {"attempts": 1}, "$set": {"last_error": str(exc)[:300]}},
+                {"$inc": {"attempts": 1}, "$set": {"last_error": err_text[:300]}},
             )
             break
     if sent:

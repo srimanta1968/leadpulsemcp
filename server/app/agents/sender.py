@@ -285,7 +285,16 @@ async def _process_one(doc: dict[str, Any], active_campaigns: dict[str, dict[str
         subject=rendered["subject"],
         body_html=rendered["body_html"],
         body_text=rendered["body_text"],
-        idempotency_key=doc.get("idempotency_key"),
+        # Make the per-send key unique by folding in the attempts counter.
+        # A plain (campaign,email,step) key is deterministic across retries
+        # which makes recipient MTAs (Gmail et al) dedupe on Message-Id —
+        # so only the first attempt ever lands. custom_args.idempotency_key
+        # at the provider level still carries the stable key for dedupe
+        # against our own crashed-between-send-and-write race.
+        idempotency_key=(
+            f"{doc.get('idempotency_key')}-a{int(doc.get('attempts', 1))}"
+            if doc.get("idempotency_key") else None
+        ),
     )
 
     now_iso = datetime.now(timezone.utc).isoformat()

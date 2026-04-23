@@ -33,7 +33,7 @@ def _wrap_links(html: str, tracker_base: str, tracker_id: str) -> str:
         pre, url, post = m.group(1), m.group(2), m.group(3)
         from urllib.parse import quote
 
-        wrapped = f"{tracker_base}/api/tracking/click/{tracker_id}?u={quote(url, safe='')}"
+        wrapped = f"{tracker_base}/api/tracking/click/{tracker_id}?url={quote(url, safe='')}"
         return f"<a {pre}href=\"{wrapped}\"{post}>"
 
     return _ANCHOR_RE.sub(rewrite, html)
@@ -50,16 +50,55 @@ def _append_pixel(html: str, tracker_base: str, tracker_id: str) -> str:
 
 
 def build_context(contact: dict[str, Any], campaign: dict[str, Any]) -> dict[str, Any]:
+    """Build placeholder context with safe fallbacks.
+
+    Greeting fallback: when first_name is blank we substitute
+    ``campaign.config.default_greeting`` (default "there") so templates
+    with ``Hi {{firstName}},`` never ship as ``Hi ,`` on the wire.
+    Company falls back to an empty string — templates that depend on
+    company should opt into ``{{company | default('your team')}}``-style
+    rendering at authoring time, not here.
+    """
+    first_name = contact.get("first_name") or ""
+    if not first_name:
+        cfg = campaign.get("config") or campaign
+        first_name = cfg.get("default_greeting", "there")
+    # Booking URL: accept either name the CRM may use.
+    booking_template = (
+        campaign.get("booking_url_template")
+        or campaign.get("booking_link_template")
+        or ""
+    )
+    # Substitute {trackerId} placeholder if the URL is per-recipient.
+    tracker_id = contact.get("_tracker_id") or ""
+    if tracker_id and "{trackerId}" in booking_template:
+        booking_template = booking_template.replace("{trackerId}", tracker_id)
+
     return {
-        "firstName": contact.get("first_name", ""),
-        "lastName": contact.get("last_name", ""),
-        "company": contact.get("company", ""),
-        "jobTitle": contact.get("job_title", ""),
+        "firstName": first_name,
+        "lastName": contact.get("last_name") or "",
+        "company": contact.get("company") or contact.get("company_domain") or "",
+        "jobTitle": contact.get("job_title") or "",
         "email": contact.get("email", ""),
-        "booking_link": campaign.get("booking_link_template", ""),
+        "booking_link": booking_template,
         "target_url": campaign.get("target_url_template", ""),
         "custom": contact.get("custom_fields", {}),
     }
+
+
+def _text_to_html(text: str) -> str:
+    """Minimal text→HTML conversion so open-pixel + click-wrap work when the
+    template has only a plain-text body. Escapes HTML metacharacters, turns
+    bare URLs into <a> tags, wraps in <p>."""
+    from html import escape
+
+    escaped = escape(text, quote=False)
+    url_re = re.compile(r"(https?://[^\s<>\"']+)")
+    with_links = url_re.sub(r'<a href="\1">\1</a>', escaped)
+    # Double newline -> paragraph break; single newline -> <br>.
+    paragraphs = [p.replace("\n", "<br>") for p in with_links.split("\n\n") if p.strip()]
+    body = "".join(f"<p>{p}</p>" for p in paragraphs)
+    return f"<html><body>{body}</body></html>"
 
 
 def render_email(
@@ -71,11 +110,19 @@ def render_email(
     tracker_base_url: str,
 ) -> dict[str, str]:
     """Return ``{subject, body_html, body_text}``."""
+    # Expose the tracker_id on the contact so build_context can substitute
+    # {trackerId} in per-recipient booking URLs.
+    contact = {**contact, "_tracker_id": tracker_id}
     ctx = build_context(contact, campaign)
 
     subject = _render_placeholders(step.get("subject", step.get("subject_template", "")), ctx)
     body_html = _render_placeholders(step.get("body_html", step.get("body_template_html", "")), ctx)
     body_text = _render_placeholders(step.get("body_text", step.get("body_template_text", "")), ctx)
+
+    # If the step is text-only, synthesize an HTML version from the text so
+    # open-pixel and click-wrapping (and provider-native open tracking) work.
+    if not body_html and body_text:
+        body_html = _text_to_html(body_text)
 
     if body_html and tracker_id:
         body_html = _wrap_links(body_html, tracker_base_url.rstrip("/"), tracker_id)

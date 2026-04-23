@@ -450,6 +450,16 @@ class LeadPulseClient:
     async def post_file_ingested(self, payload: dict[str, Any]) -> dict[str, Any]:
         return await self._post_or_buffer("/api/mcp/file-ingested", payload)
 
+    async def mint_trackers(
+        self, campaign_id: str, recipients: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Batch-mint encrypted tracker ids for a set of (email, step_index)
+        pairs. Returned tokens are the cidHint.prefix.ciphertext format that
+        /api/tracking/click decrypts with the campaign owner's key.
+        """
+        payload = {"campaign_id": campaign_id, "recipients": recipients}
+        return await self._request("POST", "/api/mcp/mint-trackers", json_body=payload)
+
     async def post_tracker_event(self, payload: dict[str, Any]) -> dict[str, Any]:
         return await self._post_or_buffer("/api/mcp/tracker-event", payload)
 

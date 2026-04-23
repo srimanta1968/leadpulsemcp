@@ -133,10 +133,10 @@ async def _ingest_file(
             if match and (match.get("presigned_url") or match.get("s3_url")):
                 content = await _download_bytes(match["presigned_url"] or match["s3_url"])
             else:
-                await _report_file_failed(file_id, str(exc))
+                await _report_file_failed(file_id, str(exc), campaign_id=campaign_id)
                 return True
         else:
-            await _report_file_failed(file_id, str(exc))
+            await _report_file_failed(file_id, str(exc), campaign_id=campaign_id)
             return True
 
     # Header validation — peek at the first row without materializing the
@@ -145,7 +145,7 @@ async def _ingest_file(
     try:
         headers = contact_parser.peek_headers(filename, content)
     except ValueError as exc:
-        await _report_file_failed(file_id, f"unparseable: {exc}")
+        await _report_file_failed(file_id, f"unparseable: {exc}", campaign_id=campaign_id)
         return True
     header_report = contact_parser.validate_headers(headers)
     if header_report["missing_required"]:
@@ -158,6 +158,7 @@ async def _ingest_file(
                 "missing_required": header_report["missing_required"],
                 "unknown_headers": header_report["unknown"],
             },
+            campaign_id=campaign_id,
         )
         return True
 
@@ -166,7 +167,7 @@ async def _ingest_file(
     try:
         rows, row_stats = contact_parser.parse_stream_with_stats(filename, content)
     except ValueError as exc:
-        await _report_file_failed(file_id, f"unparseable: {exc}")
+        await _report_file_failed(file_id, f"unparseable: {exc}", campaign_id=campaign_id)
         return True
 
     validation_block: dict[str, object] = {
@@ -178,6 +179,7 @@ async def _ingest_file(
     if not rows:
         await lpc_mod.leadpulse_client.post_file_ingested(
             {
+                "campaign_id": campaign_id,
                 "file_id": file_id,
                 "row_count": 0,
                 "error_count": row_stats.get("rows_missing_email", 0)
@@ -200,12 +202,43 @@ async def _ingest_file(
 
     if error_rate > _MAX_ROW_ERROR_RATE:
         await _report_file_failed(
-            file_id, f"row error rate {error_rate:.0%} > 10%"
+            file_id, f"row error rate {error_rate:.0%} > 10%", campaign_id=campaign_id,
         )
         return True
 
-    # Enqueue sends for each contact x step
-    tracker_ids = {t.get("email"): t.get("tracker_id") for t in (file_info.get("trackers") or [])}
+    # Mint encrypted tracker ids up-front — one per (email, step_index) —
+    # so URLs don't embed recipient email as plaintext and the CRM click
+    # handler can decode full engagement context via its owner key.
+    # Manifest-provided trackers (file_info.trackers) win; otherwise we
+    # batch-mint from CRM. Last-resort fallback retained for defensiveness.
+    manifest_trackers: dict[tuple[str, int], str] = {
+        (t.get("email"), int(t.get("step_index", 0))): t.get("tracker_id")
+        for t in (file_info.get("trackers") or [])
+        if t.get("email") and t.get("tracker_id")
+    }
+    mint_requests: list[dict[str, Any]] = []
+    for row in rows:
+        for step in steps:
+            key = (row["email"], int(step.get("step_index", 0)))
+            if key in manifest_trackers:
+                continue
+            mint_requests.append({
+                "email": row["email"],
+                "step_index": int(step.get("step_index", 0)),
+                "first_name": row.get("first_name") or None,
+                "last_name": row.get("last_name") or None,
+                "phone": row.get("phone") or None,
+                "company": row.get("company") or None,
+            })
+    minted_trackers: dict[tuple[str, int], str] = {}
+    if mint_requests:
+        try:
+            resp = await lpc_mod.leadpulse_client.mint_trackers(campaign_id, mint_requests)
+            for t in (resp.get("data") or {}).get("trackers", []):
+                minted_trackers[(t.get("email"), int(t.get("step_index", 0)))] = t.get("tracker_id")
+        except Exception:  # noqa: BLE001
+            log.exception("mint_trackers_failed", extra={"extra_payload": {"campaign_id": campaign_id}})
+
     start_date = _parse_start_date(campaign.get("start_date"))
     cfg = campaign.get("config") or campaign
     send_window_start = cfg.get("send_window_start", "09:00")
@@ -216,15 +249,20 @@ async def _ingest_file(
         email = row["email"]
         contact_id = await _lookup_contact_id(db, campaign_id, email)
         for step in steps:
+            step_idx = int(step.get("step_index", 0))
             scheduled = _compute_scheduled_for(start_date, step, send_window_start, tz_name)
-            tracker_id = tracker_ids.get(email) or f"{campaign_id}:{email}:{step.get('step_index', 0)}"
+            tracker_id = (
+                manifest_trackers.get((email, step_idx))
+                or minted_trackers.get((email, step_idx))
+                or f"{campaign_id}:{email}:{step_idx}"
+            )
             if await sqs.enqueue_send(
                 db,
                 campaign_id=campaign_id,
                 tenant_user_id=tenant_user_id,
                 contact_id=contact_id,
                 email=email,
-                step_index=int(step.get("step_index", 0)),
+                step_index=step_idx,
                 tracker_id=tracker_id,
                 scheduled_for=scheduled,
             ):
@@ -244,6 +282,7 @@ async def _ingest_file(
     )
     await lpc_mod.leadpulse_client.post_file_ingested(
         {
+            "campaign_id": campaign_id,
             "file_id": file_id,
             "row_count": len(rows),
             "error_count": parse_errors,
@@ -258,10 +297,12 @@ async def _report_file_failed(
     file_id: str,
     message: str,
     validation: dict[str, object] | None = None,
+    campaign_id: str | None = None,
 ) -> None:
     db = get_db()
     await db.ingest_errors.insert_one(
         {
+            "campaign_id": campaign_id,
             "file_id": file_id,
             "message": message,
             "validation": validation,
@@ -276,6 +317,8 @@ async def _report_file_failed(
             "ingestion_status": "failed",
             "error": message,
         }
+        if campaign_id is not None:
+            payload["campaign_id"] = campaign_id
         if validation is not None:
             payload["validation"] = validation
         await lpc_mod.leadpulse_client.post_file_ingested(payload)
