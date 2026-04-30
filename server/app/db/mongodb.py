@@ -58,6 +58,17 @@ async def _ensure_indexes(db: AsyncIOMotorDatabase) -> None:
         [("deliverability_score", -1), ("hard_bounce", 1)], name="hygiene_rank"
     )
     await db.refined_contacts.create_index("last_verified_at", name="verify_sweep")
+    # Provenance & segmentation — supports future sellable-contact-DB queries
+    # ("give me all verified fintech CTOs with score > 80").
+    await db.refined_contacts.create_index(
+        [("industry", 1), ("deliverability_score", -1)], name="segment_rank"
+    )
+    await db.refined_contacts.create_index("source_tag", name="by_source")
+    await db.refined_contacts.create_index("tz", name="by_tz")
+    # Cursor index for CRM→MCP conversion poll drain. Not strictly on
+    # refined_contacts but the campaign_contacts.converted_at field needs
+    # an index for efficient "mark converted since X" resumption.
+    await db.campaign_contacts.create_index("converted_at", name="converted_sweep")
 
     # send_queue
     await db.send_queue.create_index(
@@ -134,6 +145,25 @@ async def _ensure_indexes(db: AsyncIOMotorDatabase) -> None:
     await db.campaign_contacts.create_index("shard_key", name="shard_key")
     await db.refined_contacts.create_index("shard_key", name="shard_key")
     await db.campaign_stats.create_index("shard_key", name="shard_key")
+
+    # TK-2833 organization_id indexes — partial on the non-null path because
+    # legacy/personal campaigns leave the field null and we never query for
+    # them by org. Supports per-team analytics ("how many sends did Team
+    # Alpha generate today?") and the seen_in_orgs membership lookup on
+    # refined_contacts.
+    await db.campaign_contacts.create_index(
+        "organization_id",
+        name="by_org",
+        partialFilterExpression={"organization_id": {"$type": "string"}},
+    )
+    await db.send_queue.create_index(
+        "organization_id",
+        name="by_org",
+        partialFilterExpression={"organization_id": {"$type": "string"}},
+    )
+    await db.refined_contacts.create_index(
+        "seen_in_orgs", name="seen_in_orgs",
+    )
 
 
 async def connect_to_mongo() -> AsyncIOMotorDatabase:

@@ -26,13 +26,19 @@ async def upsert_campaign_contact(
     row: dict[str, Any],
     source_file_id: str | None,
     source_row_number: int,
+    organization_id: str | None = None,
 ) -> str:
+    """TK-2833: ``organization_id`` is stamped from the campaign manifest so
+    per-team analytics dashboards can group contacts by workspace. Dedup key
+    stays ``(campaign_id, email)`` since a campaign already belongs to one
+    org — adding org_id to the key would never change the result."""
     email = str(row["email"]).lower().strip()
     now = _now()
     doc = {
         "_id": ObjectId(),
         "campaign_id": campaign_id,
         "tenant_user_id": tenant_user_id,
+        "organization_id": organization_id,
         "shard_key": tenant_shard_key(tenant_user_id),
         "email": email,
         "first_name": row.get("first_name", ""),
@@ -64,6 +70,7 @@ async def upsert_refined_contact(
     campaign_id: str,
     tenant_user_id: str,
     row: dict[str, Any],
+    organization_id: str | None = None,
 ) -> None:
     """Merge-policy upsert. Uses an aggregation-pipeline update so logic runs
     server-side atomically. Implements section 6.1 field precedence.
@@ -78,6 +85,12 @@ async def upsert_refined_contact(
         "company_url": row.get("company_url") or None,
         "company_domain": _extract_domain(row.get("company_url")) or None,
         "job_title": row.get("job_title") or None,
+        # Sellable-DB provenance fields. Carried through from the parsed row
+        # when the source file (or enrichment step) provides them.
+        "industry": row.get("industry") or None,
+        "tz": row.get("tz") or None,
+        "source_tag": row.get("source_tag") or None,
+        "confidence_score": row.get("confidence_score"),
     }
 
     pipeline = [
@@ -103,12 +116,31 @@ async def upsert_refined_contact(
                 "primary.company_url": _prefer_newest("$primary.company_url", incoming["company_url"]),
                 "primary.company_domain": _prefer_newest("$primary.company_domain", incoming["company_domain"]),
                 "primary.job_title": _prefer_newest("$primary.job_title", incoming["job_title"]),
+                # Provenance & segmentation — newest-wins merge when incoming
+                # is non-null; otherwise keep whatever enrichment already wrote.
+                "industry": _prefer_newest("$industry", incoming["industry"]),
+                "tz": _prefer_newest("$tz", incoming["tz"]),
+                "source_tag": _prefer_newest("$source_tag", incoming["source_tag"]),
+                "confidence_score": (
+                    incoming["confidence_score"]
+                    if isinstance(incoming["confidence_score"], (int, float))
+                    else {"$ifNull": ["$confidence_score", None]}
+                ),
                 "seen_in_campaigns": {
                     "$setUnion": [{"$ifNull": ["$seen_in_campaigns", []]}, [campaign_id]]
                 },
                 "seen_in_tenants": {
                     "$setUnion": [{"$ifNull": ["$seen_in_tenants", []]}, [tenant_user_id]]
                 },
+                # TK-2833: track which orgs have seen this contact. Lets the
+                # CRM ask "has Team A seen X?" without scanning campaign_contacts.
+                # When organization_id is null (legacy/personal campaigns) we
+                # skip the union entirely so the array doesn't fill with nulls.
+                "seen_in_orgs": (
+                    {"$setUnion": [{"$ifNull": ["$seen_in_orgs", []]}, [organization_id]]}
+                    if organization_id
+                    else {"$ifNull": ["$seen_in_orgs", []]}
+                ),
             }
         }
     ]
@@ -160,10 +192,14 @@ async def bulk_upsert(
     tenant_user_id: str,
     rows: list[dict[str, Any]],
     source_file_id: str | None,
+    organization_id: str | None = None,
 ) -> dict[str, int]:
     """Used by the extraction agent for batch parsed rows. Falls back to per-row
     refined merge (pipeline updates aren't trivially bulk_write-compatible
     across all Mongo versions); campaign_contacts is bulk-written.
+
+    TK-2833: organization_id is stamped on every campaign_contacts and
+    refined_contacts doc the agent writes for this campaign.
     """
     if not rows:
         return {"campaign_inserted": 0, "campaign_matched": 0, "refined_touched": 0, "errors": 0}
@@ -177,6 +213,7 @@ async def bulk_upsert(
                 "_id": ObjectId(),
                 "campaign_id": campaign_id,
                 "tenant_user_id": tenant_user_id,
+                "organization_id": organization_id,
                 "shard_key": tenant_shard_key(tenant_user_id),
                 "email": email,
                 "first_name": row.get("first_name", ""),
@@ -212,7 +249,9 @@ async def bulk_upsert(
     refined_touched = 0
     for row in rows:
         try:
-            await upsert_refined_contact(db, campaign_id, tenant_user_id, row)
+            await upsert_refined_contact(
+                db, campaign_id, tenant_user_id, row, organization_id=organization_id,
+            )
             refined_touched += 1
         except Exception:  # noqa: BLE001
             errors += 1

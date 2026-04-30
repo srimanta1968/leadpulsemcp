@@ -81,6 +81,10 @@ async def _ingest_campaign(container_id: str, summary: dict[str, Any]) -> bool:
         files = manifest.get("files") or campaign.get("files") or []
         steps = manifest.get("steps") or campaign.get("sequence_snapshot") or []
         tenant_user_id = campaign.get("tenant_user_id") or campaign.get("user_id")
+        # TK-2833: organization_id is added to the manifest by the CRM
+        # (mcp-work.service.ts) when the campaign belongs to a workspace.
+        # Personal/legacy campaigns leave this null.
+        organization_id = campaign.get("organization_id")
         for file_info in files:
             status = file_info.get("ingestion_status")
             if status in ("complete", "failed"):
@@ -88,6 +92,7 @@ async def _ingest_campaign(container_id: str, summary: dict[str, Any]) -> bool:
             file_ok = await _ingest_file(
                 campaign_id=campaign_id,
                 tenant_user_id=tenant_user_id,
+                organization_id=organization_id,
                 campaign=campaign,
                 steps=steps,
                 file_info=file_info,
@@ -106,6 +111,7 @@ async def _ingest_file(
     *,
     campaign_id: str,
     tenant_user_id: str,
+    organization_id: str | None,
     campaign: dict[str, Any],
     steps: list[dict[str, Any]],
     file_info: dict[str, Any],
@@ -191,7 +197,9 @@ async def _ingest_file(
         return True
 
     upsert_stats = await rcs.bulk_upsert(
-        db, campaign_id, tenant_user_id, rows, source_file_id=file_id
+        db, campaign_id, tenant_user_id, rows,
+        source_file_id=file_id,
+        organization_id=organization_id,
     )
     parse_errors = (
         upsert_stats.get("errors", 0)
@@ -260,6 +268,7 @@ async def _ingest_file(
                 db,
                 campaign_id=campaign_id,
                 tenant_user_id=tenant_user_id,
+                organization_id=organization_id,
                 contact_id=contact_id,
                 email=email,
                 step_index=step_idx,

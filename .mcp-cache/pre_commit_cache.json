@@ -1,5 +1,5 @@
 {
-  "last_scan": "2026-04-20T04:53:23.773506Z",
+  "last_scan": "2026-04-21T04:15:43.551298Z",
   "scanned_files": {
     ".claude/config/claude-config.json": {
       "hash": "d54562430178e6dca21a55689250c6e7a123bb57a724e4e4fd6b4af4a92de218",
@@ -11,13 +11,13 @@
       "linesOfCode": 29
     },
     ".claude/settings.local.json": {
-      "hash": "b37825248b3490139cfde53d8b6b450aea0e559d899804aa8e5da5c06015f191",
+      "hash": "6f51c86915fa9e7173d46c047e2c5299dbca2d026cc3d85fdc42eec2e25df63b",
       "compliance": 100,
       "violations": [],
       "standards_version": "local-only-vunknown",
       "custom_violations": [],
-      "timestamp": "2026-04-19T22:35:43.220232Z",
-      "linesOfCode": 18
+      "timestamp": "2026-04-21T04:15:40.747028Z",
+      "linesOfCode": 24
     },
     "aws/cloudwatch-alarms.json": {
       "hash": "993aace99e30b1781a14921c680b960191f446e8291a7222c724b0953f247495",
@@ -1357,6 +1357,55 @@
       "custom_violations": [],
       "timestamp": "2026-04-20T04:53:02.520050Z",
       "linesOfCode": 97
+    },
+    ".mcp-cache/api_test_cache.json": {
+      "hash": "6268392e1b29d4ad682874bff66a2c903b3ccab82c472eb63f8a3037f92bc825",
+      "compliance": 100,
+      "violations": [],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-21T04:15:40.958325Z",
+      "linesOfCode": 29
+    },
+    ".mcp-cache/component_scan_cache.json": {
+      "hash": "8293cf32281714c8d392d620ad0c5fed6a2190ba0bef453320af6a504f03ec3c",
+      "compliance": 100,
+      "violations": [],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-21T04:15:41.179050Z",
+      "linesOfCode": 29
+    },
+    ".mcp-cache/pre_commit_cache.json": {
+      "hash": "b665f7b732ce931da0e0d79fc8933a931c7d1bd96413861cc18c6444add43b7e",
+      "compliance": 100,
+      "violations": [],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-21T04:15:42.014172Z",
+      "linesOfCode": 1363
+    },
+    "server/app/core/allocation.py": {
+      "hash": "c2e7b4392f0b6bdbbfe77c8d5448eab8eaf5aec40c5369d2748bc5f99e15097f",
+      "compliance": 97,
+      "violations": [
+        {
+          "line": 0,
+          "severity": "minor",
+          "category": "general",
+          "rule": "SC-07",
+          "description": "Missing Docstrings for public functions",
+          "currentCode": "",
+          "autoFixable": false,
+          "confidence": 90,
+          "source": "local_rules",
+          "filePath": "server/app/core/allocation.py"
+        }
+      ],
+      "standards_version": "local-only-vunknown",
+      "custom_violations": [],
+      "timestamp": "2026-04-21T04:15:42.619802Z",
+      "linesOfCode": 62
     }
   },
   "registered_apis": {}

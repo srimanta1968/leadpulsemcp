@@ -20,7 +20,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.agents import extraction, heartbeat, hygiene, sender
+from app.agents import conversion_sync, extraction, heartbeat, hygiene, sender
 from app.agents.supervisor import supervisor
 from app.api.v1 import router as api_v1_router
 from app.api.v1.endpoints import health as health_ep
@@ -180,6 +180,7 @@ async def _wait_and_start_agents() -> None:
 
     supervisor.register("pending_events_replay", _replay_loop)
     supervisor.register("tenant_quotas_refresher", tenant_quotas.run)
+    supervisor.register("conversion_sync", conversion_sync.run)
 
     await supervisor.start_all()
     log.info("supervisor_started", extra={"extra_payload": {"sender_agents": K}})

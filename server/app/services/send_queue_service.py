@@ -39,8 +39,15 @@ async def enqueue_send(
     step_index: int,
     tracker_id: str,
     scheduled_for: datetime,
+    organization_id: str | None = None,
 ) -> bool:
-    """Upsert a single (campaign, email, step) send_queue doc. Returns True on insert."""
+    """Upsert a single (campaign, email, step) send_queue doc. Returns True on insert.
+
+    TK-2833: ``organization_id`` is stamped from the campaign manifest so
+    per-team analytics can group sends by workspace. Idempotency key
+    intentionally still uses ``(campaign_id, email, step_index)`` — adding
+    org_id would never differ since campaign_id already implies the org.
+    """
     normalized_email = email.lower().strip()
     # updated_at lives only in $set — keeping it here too would make Mongo
     # reject the upsert with "Updating the path 'updated_at' would create
@@ -50,6 +57,7 @@ async def enqueue_send(
         "_id": ObjectId(),
         "campaign_id": campaign_id,
         "tenant_user_id": tenant_user_id,
+        "organization_id": organization_id,
         "shard_key": tenant_shard_key(tenant_user_id),
         "contact_id": contact_id,
         "email": normalized_email,

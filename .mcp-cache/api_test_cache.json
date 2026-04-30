@@ -1,28 +1,28 @@
 {
-  "last_test_run": "2026-04-21T02:50:11.470161",
+  "last_test_run": "2026-04-21T04:16:14.321460",
   "tested_apis": {
     "POST:/api/v1/bootstrap": {
-      "lastTested": "2026-04-21T02:50:11.470198",
+      "lastTested": "2026-04-21T04:16:14.321479",
       "fileHash": null
     },
     "GET:/api/v1/contacts/lookup": {
-      "lastTested": "2026-04-21T02:50:11.470200",
+      "lastTested": "2026-04-21T04:16:14.321486",
       "fileHash": null
     },
     "POST:/api/v1/contacts/mark-converted": {
-      "lastTested": "2026-04-21T02:50:11.470202",
+      "lastTested": "2026-04-21T04:16:14.321489",
       "fileHash": null
     },
     "POST:/api/v1/contacts/mark-unsubscribed": {
-      "lastTested": "2026-04-21T02:50:11.470203",
+      "lastTested": "2026-04-21T04:16:14.321492",
       "fileHash": null
     },
     "POST:/api/v1/admin/scale-hint": {
-      "lastTested": "2026-04-21T02:50:11.470196",
+      "lastTested": "2026-04-21T04:16:14.321495",
       "fileHash": null
     },
     "GET:/api/v1/admin/live-stats/:campaign_id": {
-      "lastTested": "2026-04-21T02:50:11.470191",
+      "lastTested": "2026-04-21T04:16:14.321497",
       "fileHash": null
     }
   }
