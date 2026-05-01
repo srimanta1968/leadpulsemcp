@@ -145,6 +145,16 @@ async def _ingest_file(
             await _report_file_failed(file_id, str(exc), campaign_id=campaign_id)
             return True
 
+    # Caller-supplied column mapping from the CRM column-mapping UI. Keys
+    # are the file's original headers, values are canonical field names.
+    # Empty value (or missing key) leaves a header to alias auto-detection.
+    raw_mapping = file_info.get("column_mapping") or {}
+    column_mapping: dict[str, str] | None = (
+        {str(k): str(v) for k, v in raw_mapping.items()}
+        if isinstance(raw_mapping, dict) and raw_mapping
+        else None
+    )
+
     # Header validation — peek at the first row without materializing the
     # whole file. Fail fast if required columns are missing so the user
     # sees a clear error instead of an empty ingest result.
@@ -153,7 +163,7 @@ async def _ingest_file(
     except ValueError as exc:
         await _report_file_failed(file_id, f"unparseable: {exc}", campaign_id=campaign_id)
         return True
-    header_report = contact_parser.validate_headers(headers)
+    header_report = contact_parser.validate_headers(headers, column_mapping)
     if header_report["missing_required"]:
         missing = ", ".join(header_report["missing_required"])  # type: ignore[arg-type]
         await _report_file_failed(
@@ -163,6 +173,7 @@ async def _ingest_file(
                 "matched": header_report["matched"],
                 "missing_required": header_report["missing_required"],
                 "unknown_headers": header_report["unknown"],
+                "detected_headers": headers,
             },
             campaign_id=campaign_id,
         )
@@ -171,7 +182,9 @@ async def _ingest_file(
     rows: list[dict[str, Any]] = []
     row_stats: dict[str, int] = {}
     try:
-        rows, row_stats = contact_parser.parse_stream_with_stats(filename, content)
+        rows, row_stats = contact_parser.parse_stream_with_stats(
+            filename, content, column_mapping
+        )
     except ValueError as exc:
         await _report_file_failed(file_id, f"unparseable: {exc}", campaign_id=campaign_id)
         return True
@@ -179,6 +192,7 @@ async def _ingest_file(
     validation_block: dict[str, object] = {
         "matched": header_report["matched"],
         "unknown_headers": header_report["unknown"],
+        "detected_headers": headers,
         **row_stats,
     }
 

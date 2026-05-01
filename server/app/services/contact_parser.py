@@ -51,8 +51,15 @@ TEMPLATE_COLUMNS = [
 REQUIRED_COLUMNS = {"email"}
 
 
-def validate_headers(headers: list[str]) -> dict[str, object]:
+def validate_headers(
+    headers: list[str], mapping: dict[str, str] | None = None
+) -> dict[str, object]:
     """Classify header row against the canonical template.
+
+    When `mapping` is provided (caller-supplied override from the CRM
+    column-mapping UI), each header is first looked up there; alias
+    matching is the fallback. Empty canonical in the mapping means
+    "ignore this column" — stays out of both `matched` and `unknown`.
 
     Returns:
         {
@@ -63,10 +70,13 @@ def validate_headers(headers: list[str]) -> dict[str, object]:
     """
     matched: dict[str, str] = {}
     unknown: list[str] = []
+    explicit_ignored: set[str] = _explicit_ignores(mapping)
     for h in headers:
         if not h:
             continue
-        canonical = _canonical_field(h)
+        if h.strip().lower() in explicit_ignored:
+            continue
+        canonical = _canonical_field(h, mapping)
         if canonical is None:
             unknown.append(h.strip())
         else:
@@ -79,8 +89,32 @@ def validate_headers(headers: list[str]) -> dict[str, object]:
     }
 
 
-def _canonical_field(header: str) -> str | None:
-    key = header.strip().lower().replace(" ", "_")
+def _explicit_ignores(mapping: dict[str, str] | None) -> set[str]:
+    """Header names (lowercased) the caller explicitly mapped to '' = ignore."""
+    if not mapping:
+        return set()
+    out: set[str] = set()
+    for orig, canonical in mapping.items():
+        if not canonical:
+            out.add(str(orig).strip().lower())
+    return out
+
+
+def _canonical_field(
+    header: str, mapping: dict[str, str] | None = None
+) -> str | None:
+    h = header.strip()
+    if mapping:
+        # Caller-supplied mapping wins over alias auto-detection. Keys are
+        # the file's original header strings (case-insensitive match).
+        # Empty canonical is handled by the caller (`_explicit_ignores`)
+        # before we get here, so an empty value reaching this loop just
+        # falls through to alias matching.
+        h_lower = h.lower()
+        for orig, canonical in mapping.items():
+            if canonical and str(orig).strip().lower() == h_lower:
+                return canonical
+    key = h.lower().replace(" ", "_")
     for canonical, aliases in _FIELD_ALIASES.items():
         if key in aliases:
             return canonical
@@ -96,14 +130,17 @@ def _normalize_phone(raw: str) -> str:
     return cleaned
 
 
-def _normalize_row(raw_row: dict[str, str]) -> dict[str, object] | None:
+def _normalize_row(
+    raw_row: dict[str, str], mapping: dict[str, str] | None = None
+) -> dict[str, object] | None:
     """Back-compat wrapper that discards the drop reason."""
-    normalized, _reason = _normalize_row_with_reason(raw_row)
+    normalized, _reason = _normalize_row_with_reason(raw_row, mapping)
     return normalized
 
 
 def _normalize_row_with_reason(
     raw_row: dict[str, str],
+    mapping: dict[str, str] | None = None,
 ) -> tuple[dict[str, object] | None, str | None]:
     """Normalize a raw header->value row.
 
@@ -115,10 +152,13 @@ def _normalize_row_with_reason(
     """
     out: dict[str, object] = {"custom_fields": {}}
     any_canonical = False
+    explicit_ignored = _explicit_ignores(mapping)
     for header, value in raw_row.items():
         if header is None:
             continue
-        canonical = _canonical_field(header)
+        if header.strip().lower() in explicit_ignored:
+            continue
+        canonical = _canonical_field(header, mapping)
         str_value = "" if value is None else str(value).strip()
         if canonical is None:
             if str_value:
@@ -155,15 +195,19 @@ def _normalize_row_with_reason(
     return out, None
 
 
-def parse_csv(stream: io.IOBase) -> Iterator[dict[str, object]]:
+def parse_csv(
+    stream: io.IOBase, mapping: dict[str, str] | None = None
+) -> Iterator[dict[str, object]]:
     reader = csv.DictReader(io.TextIOWrapper(stream, encoding="utf-8", newline=""))
     for raw in reader:
-        normalized = _normalize_row(raw)
+        normalized = _normalize_row(raw, mapping)
         if normalized is not None:
             yield normalized
 
 
-def parse_json(stream: io.IOBase) -> Iterator[dict[str, object]]:
+def parse_json(
+    stream: io.IOBase, mapping: dict[str, str] | None = None
+) -> Iterator[dict[str, object]]:
     """Stream-parse a JSON contact file item-by-item using ijson.
 
     Supports two shapes:
@@ -195,13 +239,16 @@ def parse_json(stream: io.IOBase) -> Iterator[dict[str, object]]:
         if not isinstance(raw, dict):
             continue
         normalized = _normalize_row(
-            {k: ("" if v is None else str(v)) for k, v in raw.items()}
+            {k: ("" if v is None else str(v)) for k, v in raw.items()},
+            mapping,
         )
         if normalized is not None:
             yield normalized
 
 
-def parse_xlsx(raw_bytes: bytes) -> Iterator[dict[str, object]]:
+def parse_xlsx(
+    raw_bytes: bytes, mapping: dict[str, str] | None = None
+) -> Iterator[dict[str, object]]:
     wb = load_workbook(io.BytesIO(raw_bytes), read_only=True, data_only=True)
     ws = wb.active
     if ws is None:
@@ -214,19 +261,23 @@ def parse_xlsx(raw_bytes: bytes) -> Iterator[dict[str, object]]:
     headers = [str(h) if h is not None else "" for h in header_row]
     for row in rows_iter:
         raw = {headers[i]: (row[i] if i < len(row) else "") for i in range(len(headers))}
-        normalized = _normalize_row({k: ("" if v is None else str(v)) for k, v in raw.items()})
+        normalized = _normalize_row(
+            {k: ("" if v is None else str(v)) for k, v in raw.items()}, mapping
+        )
         if normalized is not None:
             yield normalized
 
 
-def parse_stream(filename: str, content: bytes) -> Iterator[dict[str, object]]:
+def parse_stream(
+    filename: str, content: bytes, mapping: dict[str, str] | None = None
+) -> Iterator[dict[str, object]]:
     name = filename.lower()
     if name.endswith(".csv"):
-        yield from parse_csv(io.BytesIO(content))
+        yield from parse_csv(io.BytesIO(content), mapping)
     elif name.endswith(".json"):
-        yield from parse_json(io.BytesIO(content))
+        yield from parse_json(io.BytesIO(content), mapping)
     elif name.endswith(".xlsx"):
-        yield from parse_xlsx(content)
+        yield from parse_xlsx(content, mapping)
     else:
         raise ValueError(f"Unsupported file type: {filename}")
 
@@ -280,11 +331,17 @@ def peek_headers(filename: str, content: bytes) -> list[str]:
 
 
 def parse_stream_with_stats(
-    filename: str, content: bytes
+    filename: str,
+    content: bytes,
+    mapping: dict[str, str] | None = None,
 ) -> tuple[list[dict[str, object]], dict[str, int]]:
     """Parse every row and return both the accepted rows and a drop-reason
     histogram. The extraction agent reports the histogram back to the CRM
     so users see exactly why a file ingested fewer contacts than expected.
+
+    `mapping` (optional) is a caller-supplied {original_header -> canonical}
+    override from the CRM's column-mapping UI. When set, it takes precedence
+    over alias auto-detection on a per-header basis. Empty canonical = ignore.
     """
     rows: list[dict[str, object]] = []
     stats: dict[str, int] = {
@@ -300,7 +357,7 @@ def parse_stream_with_stats(
 
     def _process(raw_row: dict[str, str]) -> None:
         stats["total_rows_read"] += 1
-        normalized, reason = _normalize_row_with_reason(raw_row)
+        normalized, reason = _normalize_row_with_reason(raw_row, mapping)
         if normalized is not None:
             # Strip the internal sentinel before handing to the upsert
             # pipeline — it's only for stats accounting.
