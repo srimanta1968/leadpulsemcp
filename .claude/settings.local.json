@@ -14,7 +14,11 @@
       "Bash(python *)",
       "Bash(git commit -m 'Task: tenant_user_id in send_queue/campaign_stats writes + compound indexes *)",
       "Bash(git commit -m 'TK-2667: apply campaign timezone to _compute_scheduled_for *)",
-      "Bash(git commit -m 'TK-2669: per-hour throttle cap wired into sender *)"
+      "Bash(git commit -m 'TK-2669: per-hour throttle cap wired into sender *)",
+      "Bash(ssh *)",
+      "Bash(git -C /c/Users/srima/projex_crm add crm-server.sh client/src/App.tsx client/vite.config.ts)",
+      "Bash(git -C /c/Users/srima/projex_crm status --short)",
+      "Bash(git -C /c/Users/srima/projex_crm diff --cached --stat)"
     ]
   },
   "enableAllProjectMcpServers": true,

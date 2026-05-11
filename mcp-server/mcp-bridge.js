@@ -178,7 +178,7 @@ const TOOLS = [
   },
   {
     name: 'projexlight_complete_task',
-    description: 'Mark a task as complete and get the next task',
+    description: 'Mark a task as complete and get the next task. For backend/api_endpoint tasks, include apiDefinitions and/or generatedApis so the backend can register the implemented endpoints.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -195,6 +195,16 @@ const TOOLS = [
             complianceScore: { type: 'number' }
           },
           required: ['filesGenerated', 'linesOfCode', 'complianceScore']
+        },
+        apiDefinitions: {
+          type: 'array',
+          description: 'Array of API definition objects generated for this task (required for backend/api_endpoint task completion). Each item is the full api_definition JSON.',
+          items: { type: 'object', additionalProperties: true }
+        },
+        generatedApis: {
+          type: 'array',
+          description: 'Array of endpoints implemented by this task. Use when apiDefinitions is not available.',
+          items: { type: 'object', additionalProperties: true }
         },
         projectPath: {
           type: 'string',
