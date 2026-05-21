@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import os
 import signal
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.agents import crm_connectivity
@@ -243,8 +243,20 @@ async def _send_heartbeat(status_override: str | None = None) -> None:
 
 
 async def _current_campaigns(db) -> list[str]:
+    # Include campaigns with pending/leased docs PLUS campaigns whose
+    # docs were updated in the last 5 minutes. The second clause makes
+    # a freshly-drained campaign push one more heartbeat snapshot,
+    # converging the CRM-side per-step buckets to the final
+    # "all sent, 0 pending" state. Without it, the dashboard freezes
+    # on the second-to-last snapshot the moment every doc moves to a
+    # terminal status (sent/bounced/failed/skipped) and the campaign
+    # drops out of the heartbeat payload forever.
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=5)
     pipeline = [
-        {"$match": {"status": {"$in": ["pending", "leased"]}}},
+        {"$match": {"$or": [
+            {"status": {"$in": ["pending", "leased"]}},
+            {"updated_at": {"$gte": cutoff}},
+        ]}},
         {"$group": {"_id": "$campaign_id"}},
         {"$limit": 100},
     ]
