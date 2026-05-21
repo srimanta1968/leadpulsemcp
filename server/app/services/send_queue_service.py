@@ -218,6 +218,28 @@ async def any_pending_for_campaign(db: AsyncIOMotorDatabase, campaign_id: str) -
     )
 
 
+async def any_pending_for_campaign_step(
+    db: AsyncIOMotorDatabase, campaign_id: str, step_index: int
+) -> bool:
+    # Scoped to a single (campaign, step) so step-complete fires the moment
+    # this step's docs are all done — even if later steps are still pending
+    # with future scheduled_for timestamps. Without this, step-complete
+    # never posts on multi-step sequences because step N+1 docs are pre-
+    # enqueued at ingest and always look "pending" until their delay
+    # elapses.
+    return (
+        await db.send_queue.count_documents(
+            {
+                "campaign_id": campaign_id,
+                "step_index": int(step_index),
+                "status": {"$in": ["pending", "leased"]},
+            },
+            limit=1,
+        )
+        > 0
+    )
+
+
 async def pending_depth(db: AsyncIOMotorDatabase, campaign_id: str) -> int:
     return await db.send_queue.count_documents(
         {"campaign_id": campaign_id, "status": "pending"}

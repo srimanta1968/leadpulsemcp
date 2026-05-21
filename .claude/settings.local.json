@@ -18,7 +18,8 @@
       "Bash(ssh *)",
       "Bash(git -C /c/Users/srima/projex_crm add crm-server.sh client/src/App.tsx client/vite.config.ts)",
       "Bash(git -C /c/Users/srima/projex_crm status --short)",
-      "Bash(git -C /c/Users/srima/projex_crm diff --cached --stat)"
+      "Bash(git -C /c/Users/srima/projex_crm diff --cached --stat)",
+      "Bash(git *)"
     ]
   },
   "enableAllProjectMcpServers": true,

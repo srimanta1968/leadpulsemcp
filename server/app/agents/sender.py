@@ -157,6 +157,7 @@ async def _process_one(doc: dict[str, Any], active_campaigns: dict[str, dict[str
     campaign_id = doc["campaign_id"]
     email = doc["email"]
     tenant_user_id = doc["tenant_user_id"]
+    step_idx = int(doc["step_index"])
 
     campaign_summary = active_campaigns.get(campaign_id) or {}
     # Pre-send campaign-status sync-check: the active_campaigns cache
@@ -313,8 +314,21 @@ async def _process_one(doc: dict[str, Any], active_campaigns: dict[str, dict[str
         await throttle_service.increment_stat(db, campaign_id, tenant_user_id, "delivered", 1)
         metric_counter("mcp.sender.emails_sent_total", 1, {"provider": result.provider})
         try:
+            # Include campaign_id + step_index alongside trackerId. The CRM
+            # route can decode campaignId from an encrypted tracker, but
+            # the fallback tracker format used when mint_trackers fails
+            # ("{cid}:{email}:{step}") is not decodable and the request
+            # was rejected with 400 — meaning stats_daily.sends never
+            # incremented. Sending the IDs explicitly removes the
+            # dependency on tracker decodability.
             await lpc_mod.leadpulse_client.post_tracker_event(
-                {"trackerId": doc.get("tracker_id"), "event": "sent", "ts": now_iso}
+                {
+                    "trackerId": doc.get("tracker_id"),
+                    "campaign_id": campaign_id,
+                    "step_index": step_idx,
+                    "event": "sent",
+                    "ts": now_iso,
+                }
             )
         except Exception:  # noqa: BLE001
             log.exception("tracker_event_failed")
@@ -352,11 +366,16 @@ async def _process_one(doc: dict[str, Any], active_campaigns: dict[str, dict[str
             await throttle_service.release_hourly_cap(db, campaign_id, tenant_user_id)
         log.warning("send_failed", extra={**log_extra, "extra_payload": {"err": result.error}})
 
-    # Completion detection
+    # Completion detection — scoped to THIS step. With multi-step sequences,
+    # step N+1 docs are pre-enqueued at ingest with future scheduled_for, so
+    # a cross-step check would never find the queue empty. Per-step lets the
+    # CRM record step completion as each step finishes; when the last step
+    # completes, applyCampaignComplete fires CRM-side and the autoscaler
+    # scales down.
     try:
-        if not await sqs.any_pending_for_campaign(db, campaign_id):
+        if not await sqs.any_pending_for_campaign_step(db, campaign_id, step_idx):
             await lpc_mod.leadpulse_client.post_campaign_step_complete(
-                {"campaign_id": campaign_id, "step_index": int(doc["step_index"])}
+                {"campaign_id": campaign_id, "step_index": step_idx}
             )
     except Exception:  # noqa: BLE001
         log.exception("completion_post_failed")
